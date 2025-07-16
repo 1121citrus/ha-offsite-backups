@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+
+source /usr/local/include/bash/common-functions
+
+set -o errexit -o errtrace -o nounset -o pipefail
+set +o xtrace +o verbose
+if is_true "${DEBUG:-false}"; then
+    set -o xtrace -o verbose
+fi
+
+AWS_CONFIG_DIR=${HOME}/.aws
+ENV=${HOME}/.env
+
+# Write cronjob env to file, fill in sensible defaults, and read them back in
+cat <<EOF >"${ENV}"
+export AWS_CONFIG_FILE='/run/secrets/aws-config'
+export AWS_S3_BUCKET_NAME='${AWS_S3_BUCKET_NAME:?Need bucket}'
+export BACKUP_DIR='${BACKUP_DIR:-/backups}'
+export CRON_EXPRESSION='${CRON_EXPRESSION:-@daily}'
+export DEBUG='${DEBUG:-false}'
+export DRYRUN='${DRYRUN:-false}'
+export TRANSFER_MODE='${TRANSFER_MODE:-sync}'
+EOF
+info "create env file ${ENV}"
+chmod -c 0600 "${ENV}" | info
+cat "${ENV}" | info
+source "${ENV}"
+
+# Add our cron entry, and direct stdout & stderr to Docker commands stdout
+COMMAND=/usr/local/bin/ha-offsite-backups
+info "installing cron.d entry: ${COMMAND}"
+(mkdir -pv /var/spool/cron/crontabs && chmod -c 0755 /var/spool/cron/crontabs) | info
+echo "${CRON_EXPRESSION} ${COMMAND} 2>&1" > /var/spool/cron/crontabs/root && chmod -c 0644 /var/spool/cron/crontabs/root | info
+info "crontab: $(cat /var/spool/cron/crontabs/root)"
+
+info "handing the reins over to cron daemon"
+crond -l 2 -f
+

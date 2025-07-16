@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+
+# set -xv
+
+ENV=${ENV:-${HOME:-/root}/.env}
+[[ -r "${ENV}" ]] && source "${ENV}"
+
+source "${COMMON_FUNCTIONS_FILE:-/usr/local/include/bash/common-functions}"
+
+set -o errexit -o errtrace -o nounset -o pipefail
+set +o xtrace +o verbose
+is_true "${DEBUG:-false}" && set -o xtrace -o verbose
+
+command=$(basename "${0}")
+
+export AWS_CONFIG_FILE=/run/secrets/aws-config
+export AWS_S3_BUCKET_NAME=${AWS_S3_BUCKET_NAME:?Need bucket}
+export BACKUP_DIR=${BACKUP_DIR:=/backups}
+export BUCKET=${AWS_S3_BUCKET_NAME}
+export CRON_EXPRESSION="${CRON_EXPRESSION:=@daily}"
+export DEBUG=${DEBUG:=false}
+export DRYRUN=${DRYRUN:=false}
+export XOP=${TRANSFER_MODE:=sync}
+
+function xform-backup-name() {
+    local file=${1:-Need filename}
+    # Automatic_backup_2025.6.3_2025-07-06_05.35_00004800.tar => 20250706T053500-home-assistant-automatic-backup-2025.6.3.tar
+    # FIXME: Make input and output patterns configurable
+    local f=$(basename "${file}")
+    local base=$(echo "${f}" | cut -d_ -f-3 | tr '[A-Z]' '[a-z]' | tr _ -)
+    local ext=$(echo "${f}" | rev | cut -d. -f1 | rev)
+    local date=$(echo "${f}" | cut -d_ -f4 | tr -d -- -)
+    local time=$(echo "${f}" | cut -d_ -f5- | tr -d [._] | cut -c -6)
+    local result="${date}T${time}-home-assistant-${base}.${ext}"
+    echo "${result}"
+}
+
+# Create a work directory
+WORKDIR=$(mktemp -d)
+function cleanup() {
+    local exit_status=${1}
+    local line_number=${2}
+    rm -rf "${WORKDIR}" >/dev/null 2>&1 || true
+    trap - EXIT
+    if [[ "${exit_status}" != "0" ]]; then
+        error at line number ${line_number}
+    fi
+}
+trap 'cleanup $? ${LINENO}' EXIT
+cd "${WORKDIR}"
+
+awsargs=--no-progress
+is_true "${DRYRUN}" && awsargs=${awsargs} --dryrun
+
+info begin ${command}
+case "${XOP}" in
+    'cp' | 'mv')
+        info "begin ${XOP} '${BACKUP_DIR}' to S3 bucket '${BUCKET}'"
+        # FIXME: Make -name parameter configurable
+        find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'Automatic_backup_*.tar' | while read file; do
+            object_name=$(xform-backup-name "${file}")
+            info "renaming '${file}' to '${object_name}'"
+            uri=s3://${BUCKET}/${object_name}
+            info running aws s3 ${XOP} ${awsargs} ${file} ${uri}
+            (aws s3 ${XOP} ${awsargs} ${file} ${uri} || (error "aws s3 ${XOP} exited with status $?" || true)) 2>&1 | info
+            info completed aws s3 ${XOP} ${awsargs} ${file} ${uri}
+        done
+        info "finish ${XOP} '${BACKUP_DIR}' to S3 bucket '${BUCKET}'"
+        ;;
+
+    'sync')
+        info "begin sync '${BACKUP_DIR}' to S3 bucket '${BUCKET}'"
+        # FIXME: Make -name parameter configurable
+        uri=s3://${BUCKET}
+        find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'Automatic_backup_*.tar' | while read file; do
+            object_name=$(xform-backup-name "${file}")
+            info "sync '${file}' with '${uri}/${object_name}'"
+            ln -s "${file}" "${object_name}"
+        done
+        info "running aws s3 ${XOP} ${awsargs} ${BACKUP_DIR} ${uri}"
+        (aws s3 sync ${awsargs} ${WORKDIR} ${uri} || (error "aws s3 sync exited with status $?" || true)) 2>&1 | info
+        info completed aws s3 ${XOP} ${awsargs} ${BACKUP_DIR} ${uri}
+        info "finish sync '${BACKUP_DIR}' to S3 bucket '${BUCKET}'"
+        ;;
+
+    *)
+        error "Unknown transfer mode '${XOP}': need one of 'cp', 'mv or 'sync'"
+esac
+info finish ${command}
+exit 0
+
