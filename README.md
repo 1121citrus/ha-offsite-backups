@@ -97,4 +97,4 @@ Variable | Default | Notes
 
 ## Building
 
-1. `docker buildx build --platform linux/amd64,linux/arm64 -t 1121citrus/ha-offsite-backups:latest -t 1121citrus/ha-offsite-backups:x.y.z --push .`
+1. `docker buildx build --sbom=true --provenance=true --provenance=mode=max --platform linux/amd64,linux/arm64 -t 1121citrus/ha-offsite-backups:latest -t 1121citrus/ha-offsite-backups:x.y.z --push .`
