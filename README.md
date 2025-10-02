@@ -4,13 +4,12 @@ An application specific service to rename Home Assistant backups and copy them o
 
 ## Contents
 
-- [1121citrus/ha-offsite-backups](#1121citrushome-assistantha-offsite-backups)
-  - [Contents](#contents)
-  - [Synopsis](#synopsis)
-  - [Overview](#overview)
-  - [Example](#example)
-  - [Configuration](#configuration)
-  - [Building](#building)
+- [Contents](#contents)
+- [Synopsis](#synopsis)
+- [Overview](#overview)
+- [Example](#example)
+- [Configuration](#configuration)
+- [Building](#building)
 
 ## Synopsis
 * Periodically sync Home Assistant's automated backups to off site storage (S3).
