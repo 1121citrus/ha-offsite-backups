@@ -12,7 +12,7 @@ jobs:
     env:
       BASE_IMAGE: python:3.13-alpine
       IMAGE_NAME: >-
-        ${{ secrets.DOCKERHUB_USERNAME }}/ha-offsite-backup
+        ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.event.repository.name }}
 
     steps:
       - name: Checkout Code
