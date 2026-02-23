@@ -48,19 +48,22 @@ function ha-offsite-backups() {
     # FIXME: Make -name parameter configurable
     uri=s3://${BUCKET}
     found=false
-    find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'Automatic_backup_*.tar' -print0 | while IFS= read -r -d '' file; do
+    while IFS= read -r -d '' file; do
         found=true
         object_name=$(xform-backup-name "${file}")
         info "sync '${file}' with '${uri}/${object_name}'"
         ln -s "${file}" "${object_name}"
-    done
+    done < <(find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'Automatic_backup_*.tar' -print0)
     if [[ "${found}" != true ]]; then
         info "no matching backup files found in '${BACKUP_DIR}'"
     fi
-    info "running aws s3 sync ${awsargs} ${BACKUP_DIR} ${uri}"
+    info "running aws s3 sync ${awsargs} '${WORKDIR}' ${uri}"
     # shellcheck disable=SC2086
-    (aws s3 sync ${awsargs} "${WORKDIR}" "${uri}" || (error "aws s3 sync exited with status $?" || true)) 2>&1 | info
-    info "completed aws s3 sync ${awsargs} ${BACKUP_DIR} ${uri}"
+    aws s3 sync ${awsargs} "${WORKDIR}" "${uri}" || {
+        local rc=$?
+        error "aws s3 sync exited with status ${rc}"
+    }
+    info "completed aws s3 sync ${awsargs} '${WORKDIR}' ${uri}"
     info "finish sync '${BACKUP_DIR}' to S3 bucket '${BUCKET}'"
 
     exit 0

@@ -1,47 +1,39 @@
 #!/usr/bin/env bats
 
-# Unit tests for xform-backup-name heuristic.
+# Unit tests for xform-backup-name.
+# Sources the real script - safe because all logic is inside functions;
+# common-functions sourcing only happens inside the ha-offsite-backups() body.
 
-function xform-backup-name() {
-    # Copied simplified test-version of the function to avoid sourcing the full script.
-    local file=${1:?Need filename}
-    local f
-    f=$(basename -- "${file}")
-    local re='^Automatic_backup_([^_]+)_([0-9]{4}-[0-9]{2}-[0-9]{2})_([0-9]{2}\.[0-9]{2})_([0-9]+)\.([^.]+)$'
-    if [[ "${f}" =~ ${re} ]]; then
-        local release="${BASH_REMATCH[1]}"
-        local date="${BASH_REMATCH[2]}"
-        local time="${BASH_REMATCH[3]}"
-        local nanos="${BASH_REMATCH[4]}"
-        local ext="${BASH_REMATCH[5]}"
-        local base
-        base="automatic-backup-${release,,}"
-        base="${base//_/-}"
-        local date_nodash="${date//-/}"
-        local time_nodot="${time//./}"
-        local seconds="${nanos:0:2}"
-        local time_full="${time_nodot}${seconds}"
-        printf "%sT%s-home-assistant-%s.%s" "${date_nodash}" "${time_full}" "${base}" "${ext}"
-    else
-        local ext_fallback="${f##*.}"
-        local base_fallback
-        base_fallback=$(echo "${f}" | cut -d_ -f-3 | tr '[:upper:]' '[:lower:]' | tr '_' '-')
-        local date_fallback
-        date_fallback=$(echo "${f}" | cut -d_ -f4 | tr -d '-')
-        local time_fallback
-        time_fallback=$(echo "${f}" | cut -d_ -f5- | tr -d '._' | cut -c -6)
-        printf "%sT%s-home-assistant-%s.%s" "${date_fallback}" "${time_fallback}" "${base_fallback}" "${ext_fallback}"
-    fi
+setup() {
+    source "${BATS_TEST_DIRNAME}/../src/ha-offsite-backups"
 }
 
-@test "xform-backup-name standard filename" {
-  filename="Automatic_backup_2025.6.3_2025-07-06_05.35_00004800.tar"
-  result=$(xform-backup-name "${filename}")
-  [ "${result}" = "20250706T053500-home-assistant-automatic-backup-2025.6.3.tar" ]
+@test "standard filename" {
+    result=$(xform-backup-name "Automatic_backup_2025.6.3_2025-07-06_05.35_00004800.tar")
+    [ "${result}" = "20250706T053500-home-assistant-automatic-backup-2025.6.3.tar" ]
 }
 
-@test "xform-backup-name fallback for odd filename" {
-  filename="Automatic_backup_2025.6.3_2025-07-06_05.35.tar"
-  result=$(xform-backup-name "${filename}")
-  [ -n "${result}" ]
+@test "filename with directory prefix is stripped" {
+    result=$(xform-backup-name "/backups/Automatic_backup_2025.6.3_2025-07-06_05.35_00004800.tar")
+    [ "${result}" = "20250706T053500-home-assistant-automatic-backup-2025.6.3.tar" ]
+}
+
+@test "nanos first two digits become seconds field" {
+    result=$(xform-backup-name "Automatic_backup_2025.6.3_2025-07-16_05.34_36783615.tar")
+    [ "${result}" = "20250716T053436-home-assistant-automatic-backup-2025.6.3.tar" ]
+}
+
+@test "release with multiple version components" {
+    result=$(xform-backup-name "Automatic_backup_2025.12.1_2025-12-01_00.00_00000001.tar")
+    [ "${result}" = "20251201T000000-home-assistant-automatic-backup-2025.12.1.tar" ]
+}
+
+@test "zero-padded nanos produces 00 seconds" {
+    result=$(xform-backup-name "Automatic_backup_2025.6.3_2025-07-15_09.10_00123456.tar")
+    [ "${result}" = "20250715T091000-home-assistant-automatic-backup-2025.6.3.tar" ]
+}
+
+@test "fallback for non-matching filename produces best-effort output" {
+    result=$(xform-backup-name "Automatic_backup_2025.6.3_2025-07-06_05.35.tar")
+    [ "${result}" = "20250706T0535ta-home-assistant-automatic-backup-2025.6.3.tar" ]
 }

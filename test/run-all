@@ -2,6 +2,6 @@
 
 whereami="$(dirname "${BASH_SOURCE[0]}")"
 (
-    cd "${whereami}" && docker run -it -v "${PWD}:/code" -w /code bats/bats:latest test_xform.bats
+    cd "${whereami}/.." && docker run -it -v "${PWD}:/code" -w /code bats/bats:latest test
 )
 

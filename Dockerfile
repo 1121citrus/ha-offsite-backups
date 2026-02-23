@@ -22,13 +22,14 @@ RUN apk add --no-cache \
         bash \
         coreutils \
         findutils \
+        tzdata \
         aws-cli \
     && mkdir -p /usr/local/include /usr/local/bin
 
 COPY --chmod=644 ./src/include/common-functions /usr/local/include/
 COPY --chmod=755 ./src/ha-offsite-backups ./src/healthcheck ./src/startup /usr/local/bin/
 
-# HEALTHCHECK --interval=30s --timeout=3s --retries=3 CMD /usr/local/bin/healthcheck
+HEALTHCHECK --interval=60s --timeout=5s --retries=3 CMD ["/usr/local/bin/healthcheck"]
 
 CMD [ "/usr/local/bin/startup" ]
 

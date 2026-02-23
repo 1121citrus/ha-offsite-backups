@@ -18,7 +18,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-source /usr/local/include/common-functions
+source "${COMMON_FUNCTIONS_FILE:-/usr/local/include/common-functions}"
 
 set -o errexit -o errtrace -o nounset -o pipefail
 set +o xtrace +o verbose
@@ -36,11 +36,10 @@ export BACKUP_DIR='${BACKUP_DIR:-/backups}'
 export CRON_EXPRESSION='${CRON_EXPRESSION:-@daily}'
 export DEBUG='${DEBUG:-false}'
 export DRYRUN='${DRYRUN:-false}'
-export TRANSFER_MODE='${TRANSFER_MODE:-sync}'
 EOF
 info "create env file ${ENV}"
 chmod -c 0600 "${ENV}" | info
-cat "${ENV}" | info
+info < "${ENV}"
 source "${ENV}"
 
 # Add our cron entry, and direct stdout & stderr to Docker commands stdout
