@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# shellcheck shell=bash
+# shellcheck disable=SC1090,SC1091
 
 # An application specific service to rename Home Assistant backups and copy them off site.
 # Copyright (C) 2025 James Hanlon [mailto:jim@hanlonsoftware.com]
@@ -19,13 +21,11 @@
 ENV=${ENV:-${HOME:-/root}/.env}
 [[ -r "${ENV}" ]] && source "${ENV}"
 
-source "${COMMON_FUNCTIONS_FILE:-/usr/local/include/bash/common-functions}"
+source "${COMMON_FUNCTIONS_FILE:-/usr/local/include/common-functions}"
 
 set -o errexit -o errtrace -o nounset -o pipefail
 set +o xtrace +o verbose
 is_true "${DEBUG:-false}" && set -o xtrace -o verbose
-
-command=$(basename "${0}")
 
 function has_cronjob_run() {
     # FIXME -- See https://github.com/dragonmantank/cron-expression $cron->getPreviousRunDate()

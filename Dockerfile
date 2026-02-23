@@ -16,8 +16,16 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-FROM 1121citrus/ha-bash-base:latest
+FROM alpine:3.21
 
+RUN apk add --no-cache \
+        bash \
+        coreutils \
+        findutils \
+        aws-cli \
+    && mkdir -p /usr/local/include /usr/local/bin
+
+COPY --chmod=644 ./src/include/common-functions /usr/local/include/
 COPY --chmod=755 ./src/ha-offsite-backups ./src/healthcheck ./src/startup /usr/local/bin/
 
 # HEALTHCHECK --interval=30s --timeout=3s --retries=3 CMD /usr/local/bin/healthcheck

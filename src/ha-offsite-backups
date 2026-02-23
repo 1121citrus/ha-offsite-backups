@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# shellcheck shell=bash
+# shellcheck disable=SC1090,SC1091
 
 # An application specific service to rename Home Assistant backups and copy them off site.
 # Copyright (C) 2025 James Hanlon [mailto:jim@hanlonsoftware.com]
@@ -16,92 +18,90 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# set -xv
+function ha-offsite-backups() {
+    ENV=${ENV:-${HOME:-/root}/.env}
+    [[ -r "${ENV}" ]] && source "${ENV}"
 
-ENV=${ENV:-${HOME:-/root}/.env}
-[[ -r "${ENV}" ]] && source "${ENV}"
+    source "${COMMON_FUNCTIONS_FILE:-/usr/local/include/common-functions}"
 
-source "${COMMON_FUNCTIONS_FILE:-/usr/local/include/bash/common-functions}"
+    set -o errexit -o errtrace -o nounset -o pipefail
+    is-true "${DEBUG:-false}" && set -o xtrace -o verbose
 
-set -o errexit -o errtrace -o nounset -o pipefail
-set +o xtrace +o verbose
-is_true "${DEBUG:-false}" && set -o xtrace -o verbose
+    export AWS_CONFIG_FILE=/run/secrets/aws-config
+    export AWS_S3_BUCKET_NAME=${AWS_S3_BUCKET_NAME:?Need bucket}
+    export BACKUP_DIR=${BACKUP_DIR:=/backups}
+    export BUCKET=${AWS_S3_BUCKET_NAME}
+    export CRON_EXPRESSION="${CRON_EXPRESSION:=@daily}"
+    export DEBUG=${DEBUG:=false}
+    export DRYRUN=${DRYRUN:=false}
 
-command=$(basename "${0}")
+    # Create a work directory
+    WORKDIR=$(mktemp -d)
+    # shellcheck disable=SC2064
+    trap "rm -rf '${WORKDIR}' >/dev/null 2>&1 || true" EXIT
+    cd "${WORKDIR}"
 
-export AWS_CONFIG_FILE=/run/secrets/aws-config
-export AWS_S3_BUCKET_NAME=${AWS_S3_BUCKET_NAME:?Need bucket}
-export BACKUP_DIR=${BACKUP_DIR:=/backups}
-export BUCKET=${AWS_S3_BUCKET_NAME}
-export CRON_EXPRESSION="${CRON_EXPRESSION:=@daily}"
-export DEBUG=${DEBUG:=false}
-export DRYRUN=${DRYRUN:=false}
-export XOP=${TRANSFER_MODE:=sync}
+    awsargs=--no-progress
+    is-true "${DRYRUN}" && awsargs="${awsargs} --dryrun"
+
+    info "begin sync '${BACKUP_DIR}' to S3 bucket '${BUCKET}'"
+    # FIXME: Make -name parameter configurable
+    uri=s3://${BUCKET}
+    found=false
+    find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'Automatic_backup_*.tar' -print0 | while IFS= read -r -d '' file; do
+        found=true
+        object_name=$(xform-backup-name "${file}")
+        info "sync '${file}' with '${uri}/${object_name}'"
+        ln -s "${file}" "${object_name}"
+    done
+    if [[ "${found}" != true ]]; then
+        info "no matching backup files found in '${BACKUP_DIR}'"
+    fi
+    info "running aws s3 sync ${awsargs} ${BACKUP_DIR} ${uri}"
+    # shellcheck disable=SC2086
+    (aws s3 sync ${awsargs} "${WORKDIR}" "${uri}" || (error "aws s3 sync exited with status $?" || true)) 2>&1 | info
+    info "completed aws s3 sync ${awsargs} ${BACKUP_DIR} ${uri}"
+    info "finish sync '${BACKUP_DIR}' to S3 bucket '${BUCKET}'"
+
+    exit 0
+}
 
 function xform-backup-name() {
-    local file=${1:-Need filename}
-    # Automatic_backup_2025.6.3_2025-07-06_05.35_00004800.tar => 20250706T053500-home-assistant-automatic-backup-2025.6.3.tar
-    # FIXME: Make input and output patterns configurable
-    local f=$(basename "${file}")
-    local base=$(echo "${f}" | cut -d_ -f-3 | tr '[A-Z]' '[a-z]' | tr _ -)
-    local ext=$(echo "${f}" | rev | cut -d. -f1 | rev)
-    local date=$(echo "${f}" | cut -d_ -f4 | tr -d -- -)
-    local time=$(echo "${f}" | cut -d_ -f5- | tr -d [._] | cut -c -6)
-    local result="${date}T${time}-home-assistant-${base}.${ext}"
-    echo "${result}"
-}
-
-# Create a work directory
-WORKDIR=$(mktemp -d)
-function cleanup() {
-    local exit_status=${1}
-    local line_number=${2}
-    rm -rf "${WORKDIR}" >/dev/null 2>&1 || true
-    trap - EXIT
-    if [[ "${exit_status}" != "0" ]]; then
-        error at line number ${line_number}
+    local file=${1:?Need filename}
+    # Parse filenames like:
+    # Automatic_backup_2025.6.3_2025-07-06_05.35_00004800.tar
+    # -> 20250706T053500-home-assistant-automatic-backup-2025.6.3.tar
+    # Prefer a regex-based, robust extraction and a safe fallback.
+    local f
+    f=$(basename -- "${file}")
+    local re='^Automatic_backup_([^_]+)_([0-9]{4}-[0-9]{2}-[0-9]{2})_([0-9]{2}\.[0-9]{2})_([0-9]+)\.([^.]+)$'
+    if [[ "${f}" =~ ${re} ]]; then
+        local release="${BASH_REMATCH[1]}"
+        local date="${BASH_REMATCH[2]}"
+        local time="${BASH_REMATCH[3]}"
+        local nanos="${BASH_REMATCH[4]}"
+        local ext="${BASH_REMATCH[5]}"
+        local base
+        base="automatic-backup-${release,,}"
+        base="${base//_/-}"
+        local date_nodash="${date//-/}"
+        local time_nodot="${time//./}"
+        local seconds="${nanos:0:2}"
+        local time_full="${time_nodot}${seconds}"
+        printf "%sT%s-home-assistant-%s.%s" "${date_nodash}" "${time_full}" "${base}" "${ext}"
+    else
+        # Fallback to original heuristic when regex doesn't match.
+        local ext_fallback="${f##*.}"
+        local base_fallback
+        base_fallback=$(echo "${f}" | cut -d_ -f-3 | tr '[:upper:]' '[:lower:]' | tr '_' '-')
+        local date_fallback
+        date_fallback=$(echo "${f}" | cut -d_ -f4 | tr -d '-')
+        local time_fallback
+        time_fallback=$(echo "${f}" | cut -d_ -f5- | tr -d '._' | cut -c -6)
+        printf "%sT%s-home-assistant-%s.%s" "${date_fallback}" "${time_fallback}" "${base_fallback}" "${ext_fallback}"
     fi
 }
-trap 'cleanup $? ${LINENO}' EXIT
-cd "${WORKDIR}"
 
-awsargs=--no-progress
-is_true "${DRYRUN}" && awsargs=${awsargs} --dryrun
-
-info begin ${command}
-case "${XOP}" in
-    'cp' | 'mv')
-        info "begin ${XOP} '${BACKUP_DIR}' to S3 bucket '${BUCKET}'"
-        # FIXME: Make -name parameter configurable
-        find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'Automatic_backup_*.tar' | while read file; do
-            object_name=$(xform-backup-name "${file}")
-            info "renaming '${file}' to '${object_name}'"
-            uri=s3://${BUCKET}/${object_name}
-            info running aws s3 ${XOP} ${awsargs} ${file} ${uri}
-            (aws s3 ${XOP} ${awsargs} ${file} ${uri} || (error "aws s3 ${XOP} exited with status $?" || true)) 2>&1 | info
-            info completed aws s3 ${XOP} ${awsargs} ${file} ${uri}
-        done
-        info "finish ${XOP} '${BACKUP_DIR}' to S3 bucket '${BUCKET}'"
-        ;;
-
-    'sync')
-        info "begin sync '${BACKUP_DIR}' to S3 bucket '${BUCKET}'"
-        # FIXME: Make -name parameter configurable
-        uri=s3://${BUCKET}
-        find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'Automatic_backup_*.tar' | while read file; do
-            object_name=$(xform-backup-name "${file}")
-            info "sync '${file}' with '${uri}/${object_name}'"
-            ln -s "${file}" "${object_name}"
-        done
-        info "running aws s3 ${XOP} ${awsargs} ${BACKUP_DIR} ${uri}"
-        (aws s3 sync ${awsargs} ${WORKDIR} ${uri} || (error "aws s3 sync exited with status $?" || true)) 2>&1 | info
-        info completed aws s3 ${XOP} ${awsargs} ${BACKUP_DIR} ${uri}
-        info "finish sync '${BACKUP_DIR}' to S3 bucket '${BUCKET}'"
-        ;;
-
-    *)
-        error "Unknown transfer mode '${XOP}': need one of 'cp', 'mv or 'sync'"
-esac
-info finish ${command}
-exit 0
-
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    ha-offsite-backups "$@"
+fi

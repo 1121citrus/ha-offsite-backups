@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# shellcheck shell=bash
+# shellcheck disable=SC1090,SC1091
 
 # An application specific service to rename Home Assistant backups and copy them off site.
 # Copyright (C) 2025 James Hanlon [mailto:jim@hanlonsoftware.com]
@@ -16,7 +18,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-source /usr/local/include/bash/common-functions
+source /usr/local/include/common-functions
 
 set -o errexit -o errtrace -o nounset -o pipefail
 set +o xtrace +o verbose
@@ -24,7 +26,6 @@ if is_true "${DEBUG:-false}"; then
     set -o xtrace -o verbose
 fi
 
-AWS_CONFIG_DIR=${HOME}/.aws
 ENV=${HOME}/.env
 
 # Write cronjob env to file, fill in sensible defaults, and read them back in
