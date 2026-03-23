@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+IMAGE="${IMAGE:-}"
+_SCAN="${STAGING_SCAN:-true}"
+_ADVISE_GRYPE="${STAGING_ADVISE:-true}"
+_ADVISE_SCOUT=true
+_ADVISE_DIVE=false
+_ADVISE_EXPLICIT=false
+_YES=false
+
+TRIVY_IMAGE=aquasec/trivy
+TRIVY_TAG=0.62.1
+GRYPE_IMAGE=anchore/grype
+GRYPE_TAG=v0.87.0
+DIVE_IMAGE=wagoodman/dive
+DIVE_TAG=latest
+
+show_help() {
+    cat <<'EOF'
+Usage: test/staging [options] [IMAGE]
+
+Options:
+  --image IMAGE      Docker image under test
+  --scan             Run Trivy scan (default)
+  --no-scan          Skip Trivy scan; implies --no-advise unless --advise is set
+  --advise [LIST]    Advisory scans: grype,scout,dive,all (default: grype,scout)
+  --no-advise        Disable advisory scans
+  --yes              Skip confirmation prompt
+  --help|-h          Show this help and exit
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --image)
+            IMAGE="$2"
+            shift
+            ;;
+        --scan)
+            _SCAN=true
+            ;;
+        --no-scan)
+            _SCAN=false
+            ;;
+        --advise|--advice)
+            _ADVISE_EXPLICIT=true
+            if [[ $# -gt 1 && ! "$2" =~ ^-- ]]; then
+                advisements="$2"
+                shift
+            else
+                advisements="grype,scout"
+            fi
+            _ADVISE_GRYPE=false
+            _ADVISE_SCOUT=false
+            _ADVISE_DIVE=false
+            IFS=',' read -ra adv_list <<< "$advisements"
+            for adv in "${adv_list[@]}"; do
+                case "$adv" in
+                    grype) _ADVISE_GRYPE=true ;;
+                    scout) _ADVISE_SCOUT=true ;;
+                    dive) _ADVISE_DIVE=true ;;
+                    all) _ADVISE_GRYPE=true; _ADVISE_SCOUT=true; _ADVISE_DIVE=true ;;
+                    *) echo "Unknown advisement: $adv" >&2; exit 1 ;;
+                esac
+            done
+            ;;
+        --no-advise)
+            _ADVISE_EXPLICIT=true
+            _ADVISE_GRYPE=false
+            _ADVISE_SCOUT=false
+            _ADVISE_DIVE=false
+            ;;
+        --yes)
+            _YES=true
+            ;;
+        --help|-h)
+            show_help
+            exit 0
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+        *)
+            IMAGE="$1"
+            ;;
+    esac
+    shift
+done
+
+if [[ "${_SCAN}" == "false" && "${_ADVISE_EXPLICIT}" == "false" ]]; then
+    _ADVISE_GRYPE=false
+    _ADVISE_SCOUT=false
+    _ADVISE_DIVE=false
+fi
+
+[[ -n "${IMAGE}" ]] || { echo "IMAGE is required" >&2; exit 1; }
+docker image inspect "${IMAGE}" >/dev/null 2>&1 || { echo "Image not found: ${IMAGE}" >&2; exit 1; }
+
+if [[ "${_YES}" != "true" ]]; then
+    printf 'Type "yes" to proceed, or press Enter to abort: '
+    read -r response
+    [[ "${response}" == "yes" ]] || { echo "Aborted."; exit 1; }
+fi
+
+# Basic image smoke test.
+docker run --rm --entrypoint /bin/sh "${IMAGE}" -c 'true'
+
+if [[ "${_SCAN}" == "true" ]]; then
+    docker run --rm -v /var/run/docker.sock:/var/run/docker.sock:ro \
+        "${TRIVY_IMAGE}:${TRIVY_TAG}" image --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL "${IMAGE}"
+fi
+if [[ "${_ADVISE_GRYPE}" == "true" ]]; then
+    docker run --rm -v /var/run/docker.sock:/var/run/docker.sock:ro "${GRYPE_IMAGE}:${GRYPE_TAG}" "${IMAGE}" || true
+fi
+if [[ "${_ADVISE_SCOUT}" == "true" ]]; then
+    docker scout cves "${IMAGE}" || true
+fi
+if [[ "${_ADVISE_DIVE}" == "true" ]]; then
+    docker run --rm -v /var/run/docker.sock:/var/run/docker.sock:ro "${DIVE_IMAGE}:${DIVE_TAG}" --ci "${IMAGE}" || true
+fi
+
+echo "PASS: staging checks completed for ${IMAGE}"

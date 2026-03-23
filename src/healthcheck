@@ -28,13 +28,20 @@ set +o xtrace +o verbose
 is_true "${DEBUG:-false}" && set -o xtrace -o verbose
 
 function has_cronjob_run() {
-    # FIXME -- See https://github.com/dragonmantank/cron-expression $cron->getPreviousRunDate()
-    # Compare with a timestamp file to see if it ran as expected
-    true
+    # Check for a success marker file written after each successful run.
+    # If the cron job is crashing silently, this check will fail and the
+    # container will report unhealthy, alerting the operator.
+    local marker_file="${HEALTHCHECK_SUCCESS_FILE:-/tmp/.ha-offsite-backups-success}"
+    if [[ -f "${marker_file}" ]]; then
+        # Check if the marker is recent (within the last hour).
+        local marker_age=$(($(date +%s) - $(stat -f %m "${marker_file}" 2>/dev/null || echo 0)))
+        [[ ${marker_age} -lt 3600 ]] && return 0
+    fi
+    error "backup has not run recently"
 }
 
 function is_crond_running() {
-    if ps aux | grep -E -i -q '[c]rond'; then
+    if pgrep -x crond >/dev/null; then
         true
     else
         error crond is not running

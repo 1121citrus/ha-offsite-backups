@@ -30,7 +30,7 @@ ENV=${HOME}/.env
 
 # Write cronjob env to file, fill in sensible defaults, and read them back in
 cat <<EOF >"${ENV}"
-export AWS_CONFIG_FILE='/run/secrets/aws-config'
+export AWS_CONFIG_FILE='${AWS_CONFIG_FILE:-/run/secrets/aws-config}'
 export AWS_S3_BUCKET_NAME='${AWS_S3_BUCKET_NAME:?Need bucket}'
 export BACKUP_DIR='${BACKUP_DIR:-/backups}'
 export CRON_EXPRESSION='${CRON_EXPRESSION:-@daily}'
@@ -50,5 +50,5 @@ echo "${CRON_EXPRESSION} ${COMMAND} 2>&1" > /var/spool/cron/crontabs/root && chm
 info "crontab: $(cat /var/spool/cron/crontabs/root)"
 
 info "handing the reins over to cron daemon"
-crond -l 2 -f
+exec crond -l 2 -f
 
