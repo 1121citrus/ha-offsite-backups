@@ -29,15 +29,14 @@ The image is built with defence-in-depth from the ground up:
 
 ## Security Reporting
 
-To report a security vulnerability, please email [security contact TBD] with:
+Please report security vulnerabilities through the [GitHub Security tab](https://github.com/1121citrus/ha-offsite-backups/security).
+Do not open a public GitHub issue for security vulnerabilities. Include:
 
 - **Description:** What is the vulnerability?
 - **Affected versions:** Which image tags are impacted?
 - **Severity:** CRITICAL / HIGH / MEDIUM / LOW
 - **Steps to reproduce:** How can the vulnerability be demonstrated?
 - **Impact:** What can an attacker achieve?
-
-We will acknowledge receipt within 48 hours and provide a timeline for remediation.
 
 ## Known Vulnerabilities
 

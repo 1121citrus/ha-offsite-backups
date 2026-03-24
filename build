@@ -307,6 +307,26 @@ run() {
     fi
 }
 
+# Run a command with a timeout (no external 'timeout' binary required).
+# Backgrounds the command, starts a watchdog that kills it after SECONDS,
+# then waits.  In --dry-run mode just prints the command.
+# Usage: _timed SECONDS COMMAND [ARGS...]
+_timed() {
+    local secs="$1"; shift
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        echo "[DRY RUN] (${secs}s timeout)" "$@" >&2
+        return 0
+    fi
+    "$@" &
+    local _pid=$!
+    ( sleep "${secs}" && kill "${_pid}" 2>/dev/null ) &
+    local _watcher=$!
+    wait "${_pid}" 2>/dev/null; local _rc=$?
+    kill "${_watcher}" 2>/dev/null
+    wait "${_watcher}" 2>/dev/null
+    return "${_rc}"
+}
+
 # Script directory for build context and relative paths.
 script_dir=$(dirname "$(readlink -f "$0")")
 
@@ -453,12 +473,14 @@ if [[ "${ADVISE_GRYPE}" == "true" ]]; then
     else
         docker save "${full_image}:${VERSION}" > "${_grype_tar}"
     fi
-    run docker run --rm \
+    _timed 300 docker run --rm \
         -v "${_grype_tar}:/scan.tar:ro" \
         -v "${GRYPE_CACHE_VOLUME}:/root/.cache/grype" \
         "${_grype_env[@]}" \
         "${GRYPE_IMAGE}:${GRYPE_TAG}" \
-            "docker-archive:/scan.tar" || true
+            "docker-archive:/scan.tar" || {
+        echo "    Grype scan timed out or failed (advisory only)" >&2
+    }
     rm -f "${_grype_tar}"
     trap - EXIT
 fi
@@ -487,11 +509,17 @@ if [[ "${ADVISE_DIVE}" == "true" ]]; then
     else
         docker save "${full_image}:${VERSION}" > "${_dive_tar}"
     fi
+    _dive_ci_config=()
+    if [[ -f "${script_dir}/.dive-ci" ]]; then
+        _dive_ci_config=(-v "${script_dir}/.dive-ci:/.dive-ci:ro")
+    fi
     run docker run --rm \
         -v "${_dive_tar}:/scan.tar:ro" \
+        "${_dive_ci_config[@]}" \
         "${DIVE_IMAGE}:${DIVE_TAG}" \
             --source docker-archive \
             --ci \
+            --ci-config /.dive-ci \
             /scan.tar || true
     rm -f "${_dive_tar}"
     trap - EXIT

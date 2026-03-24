@@ -103,4 +103,16 @@ Tests use [Bats](https://github.com/bats-core/bats-core) via the `bats/bats:late
 
 ## Building
 
-1. `docker buildx build --sbom=true --provenance=true --provenance=mode=max --platform linux/amd64,linux/arm64 -t 1121citrus/ha-offsite-backups:latest -t 1121citrus/ha-offsite-backups:x.y.z --push .`
+The `build` script runs all stages in order -- lint, build, test, scan:
+
+```bash
+./build
+```
+
+To tag and push a release to Docker Hub (multi-platform `linux/amd64` + `linux/arm64`):
+
+```bash
+./build --push --version 1.2.3
+```
+
+Run `./build --help` for the full list of flags.

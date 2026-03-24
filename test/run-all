@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 
+set -euo pipefail
+
 whereami="$(dirname "${BASH_SOURCE[0]}")"
+
+status=0
+"${whereami}/build-options" || status=1
 (
     cd "${whereami}/.." && docker run -it -v "${PWD}:/code" -w /code bats/bats:latest test
-)
+) || status=1
+exit $status
 

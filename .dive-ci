@@ -1,0 +1,16 @@
+rules:
+  # Efficiency below this percentage fails the check.
+  lowestEfficiency: 0.9
+
+  # Absolute wasted bytes above this threshold fails the check.
+  # Disabled: apk packages are installed at pinned versions and then some are
+  # overridden by pip within the same RUN layer; the effective waste is hard
+  # to predict and is intentional (security-version pinning).
+  highestWastedBytes: disabled
+
+  # Percentage of wasted user-layer space above this threshold fails the check.
+  # Default is 0.1 (10%).  Relaxed to 0.20: apk installs cryptography/urllib3
+  # at Alpine versions, then pip overwrites them with newer pinned versions in
+  # the same layer.  Base Alpine metadata files are also replaced on first apk
+  # add.
+  highestUserWastedPercent: 0.20
