@@ -27,13 +27,14 @@ jobs:
           dockerfile: Dockerfile
 
       - name: Lint shell scripts with shellcheck
-        # SC1090: can't follow dynamic source paths (common-functions is not
-        #         present at lint time — suppress project-wide).
+        # SC1090: can't follow dynamic source — source path is dynamic.
+        # SC1091: source target is an install-time absolute path, not
+        #         resolvable at lint time.
         # SC2148: files without a shebang are intentionally sourced libraries.
         run: |
           shellcheck \
             --shell=bash \
-            --exclude=SC1090,SC2148 \
+            --exclude=SC1090,SC1091,SC2148 \
             src/ha-offsite-backups \
             src/healthcheck \
             src/startup \
@@ -87,7 +88,7 @@ jobs:
 
       - name: Run bats test suite
         # Use -i (not -it) since there is no TTY in CI.
-        run: docker run -i --rm -v "$PWD:/code" -w /code bats/bats:latest test
+        run: docker run -i --rm -v "$PWD:/code" -w /code bats/bats:1.13.0 test
 
   # ── Stage 4: Security scan ─────────────────────────────────────────────────
   # Scans the built image before pushing.  Fails the job (and blocks push) if

@@ -25,24 +25,6 @@ all `.bats` files under `test/`.
 | `test_sync_mocked.bats` | Sync logic with a mocked `aws` CLI and stub filesystem |
 | `test_xform.bats` | Filename transformation: converts HA backup names to ISO-datetime canonical form |
 
-## Manual staging tests
-
-`test/staging` exercises the full image against a real Docker daemon with
-optional advisory scans:
-
-```sh
-# Image smoke checks only:
-test/staging --no-scan --yes 1121citrus/ha-offsite-backups:dev-abc1234
-
-# With Trivy scan and advisory scans:
-test/staging 1121citrus/ha-offsite-backups:dev-abc1234
-
-# Specific advisements:
-test/staging --advise grype,scout 1121citrus/ha-offsite-backups:dev-abc1234
-```
-
-Run `test/staging --help` for the full option list.
-
 ## Design notes
 
 - The automated tests do **not** require the application image.  They bind-mount

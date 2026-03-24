@@ -142,4 +142,3 @@ On push/PR
 
 - `./build` supports `--advise`/`--advice`, `--no-advise`, and `--cache` with Trivy/Grype cache targets.
 - Local stage 5 advisories (Grype, Scout, Dive) are non-gating and mirror the rotate-aws-backups pattern.
-- `test/staging` provides manual pre-release image validation plus optional Trivy/Grype/Scout/Dive checks.
