@@ -4,13 +4,14 @@ Automated linting, building, testing, security scanning, and Docker image public
 
 ## Workflow Overview
 
-| Stage     | Trigger                              | Purpose                                        |
-| --------- | ------------------------------------ | ---------------------------------------------- |
-| **Lint**  | All pushes, PRs, tags                | Validate Dockerfile and shell scripts          |
-| **Build** | After lint                           | Build image as artifact (for scan)             |
-| **Test**  | After lint (parallel with build)     | Run bats tests in a bats Docker container      |
-| **Scan**  | After build                          | Trivy image scan — blocks push on fixable CVEs |
-| **Push**  | Version tags and staging branch only | Multi-platform build and push to Docker Hub    |
+| Stage          | Trigger                              | Purpose                                        |
+| -------------- | ------------------------------------ | ---------------------------------------------- |
+| **Lint**       | All pushes, PRs, tags                | Validate Dockerfile and shell scripts          |
+| **Build**      | After lint                           | Build image as artifact (for scan)             |
+| **Test**       | After lint (parallel with build)     | Run bats tests in a bats Docker container      |
+| **Scan**       | After build                          | Trivy image scan — blocks push on fixable CVEs |
+| **Push**       | Version tags and staging branch only | Multi-platform build and push to Docker Hub    |
+| **Dependabot** | Weekly (Monday 06:00 UTC)            | Keep GitHub Actions versions current           |
 
 ## CI Workflow (`ci.yml`)
 
@@ -41,7 +42,7 @@ No automation bumps the version — the tag is always a deliberate decision.
 - **ShellCheck** — static analysis of `src/` shell scripts:
   - `src/ha-offsite-backups`, `src/healthcheck`, `src/startup`
   - `src/include/common-functions`
-  - `--exclude=SC1090,SC2148` — suppresses warnings for intentionally sourced library files
+  - `--exclude=SC1090,SC1091,SC2148` — SC1090/SC1091: source paths are dynamic or install-time absolute paths not present at lint time; SC2148: `common-functions` is an intentionally sourced library
 
 ---
 
@@ -55,10 +56,10 @@ Artifact retention: 1 day.
 
 ## Stage 3: Test
 
-Runs in parallel with the build job (both depend only on lint). The test suite runs inside the official `bats/bats:latest` Docker container with the project source bind-mounted:
+Runs in parallel with the build job (both depend only on lint). The test suite runs inside the official `bats/bats:1.13.0` Docker container with the project source bind-mounted:
 
 ```bash
-docker run -i --rm -v "$PWD:/code" -w /code bats/bats:latest test
+docker run -i --rm -v "$PWD:/code" -w /code bats/bats:1.13.0 test
 ```
 
 This runs all `.bats` files in the `test/` directory:
@@ -137,6 +138,19 @@ On push/PR
 - `test/test_sync_mocked.bats` — Sync logic tests
 - `test/test_xform.bats` — Filename transformation tests
 - `test/run-all` — Local test runner (uses `-it`; not used in CI)
+
+## Automated dependency updates
+
+`dependabot.yml` configures weekly automated PRs to keep GitHub Actions current.
+
+- **Schedule:** Every Monday at 06:00 UTC
+- **Scope:** GitHub Actions (`package-ecosystem: github-actions`) — updates action pins in
+  `.github/workflows/*.yml`
+- **Labels:** `dependencies`, `github-actions`
+- **Security benefit:** Dependabot also proposes SHA-pinned digests (recommended for SLSA /
+  OpenSSF Scorecard hardening)
+
+---
 
 ## Local Workflow Parity
 
