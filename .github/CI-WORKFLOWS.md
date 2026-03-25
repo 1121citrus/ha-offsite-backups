@@ -45,10 +45,11 @@ No automation bumps the version — the tag is always a deliberate decision.
 ## Stage 1: Lint
 
 - **Hadolint** — Dockerfile best-practice checks
-- **ShellCheck** — static analysis of `src/` shell scripts:
+- **ShellCheck** — static analysis (`-x`) of `src/` shell scripts:
   - `src/ha-offsite-backups`, `src/healthcheck`, `src/startup`
   - `src/include/common-functions`
-  - `--exclude=SC1090,SC1091,SC2148` — SC1090/SC1091: source paths are dynamic or install-time absolute paths not present at lint time; SC2148: `common-functions` is an intentionally sourced library
+  - Per-file `# shellcheck disable=SC1090,SC1091` directives handle dynamic and
+    install-time source paths
 
 ---
 
