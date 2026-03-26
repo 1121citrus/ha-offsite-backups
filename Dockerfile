@@ -18,6 +18,20 @@
 
 FROM alpine:3.22
 
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+ARG BUILD_DATE=unknown
+LABEL org.opencontainers.image.title="ha-offsite-backups" \
+      org.opencontainers.image.description="Rename Home Assistant backups and copy them off site to AWS S3" \
+      org.opencontainers.image.url="https://github.com/1121citrus/ha-offsite-backups" \
+      org.opencontainers.image.source="https://github.com/1121citrus/ha-offsite-backups" \
+      org.opencontainers.image.vendor="1121 Citrus Avenue" \
+      org.opencontainers.image.authors="James Hanlon <jim@hanlonsoftware.com>" \
+      org.opencontainers.image.licenses="AGPL-3.0-or-later" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${GIT_COMMIT}" \
+      org.opencontainers.image.created="${BUILD_DATE}"
+
 RUN apk add --no-cache --no-interactive --upgrade \
         aws-cli=2.27.25-r0 \
         bash=5.2.37-r0 \
