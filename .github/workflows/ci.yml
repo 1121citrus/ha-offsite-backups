@@ -90,6 +90,52 @@ jobs:
         # Use -i (not -it) since there is no TTY in CI.
         run: docker run -i --rm -v "$PWD:/code" -w /code bats/bats:1.13.0 test
 
+  # ── Stage 3b: Image smoke test ───────────────────────────────────────────
+  # Quick sanity checks against the built image to catch packaging
+  # regressions not visible in source-mounted bats tests.
+  smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download image artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load image
+        run: gunzip -c /tmp/image.tar.gz | docker load
+
+      - name: Verify bash is available
+        run: >-
+          docker run --rm --entrypoint bash
+          "$IMAGE:ci-${{ github.sha }}" --version
+
+      - name: Verify aws CLI is available
+        run: >-
+          docker run --rm --entrypoint aws
+          "$IMAGE:ci-${{ github.sha }}" --version
+
+      - name: Verify common-functions is installed
+        run: >-
+          docker run --rm --entrypoint test
+          "$IMAGE:ci-${{ github.sha }}" -f /usr/local/include/common-functions
+
+      - name: Verify startup is executable
+        run: >-
+          docker run --rm --entrypoint test
+          "$IMAGE:ci-${{ github.sha }}" -x /usr/local/bin/startup
+
+      - name: Verify ha-offsite-backups is executable
+        run: >-
+          docker run --rm --entrypoint test
+          "$IMAGE:ci-${{ github.sha }}" -x /usr/local/bin/ha-offsite-backups
+
+      - name: Verify healthcheck is executable
+        run: >-
+          docker run --rm --entrypoint test
+          "$IMAGE:ci-${{ github.sha }}" -x /usr/local/bin/healthcheck
+
   # ── Stage 4: Security scan ─────────────────────────────────────────────────
   # Scans the built image before pushing.  Fails the job (and blocks push) if
   # any fixable HIGH or CRITICAL CVEs are found; unfixed CVEs are suppressed.
@@ -130,7 +176,7 @@ jobs:
   # Version tags → image:X.Y.Z + image:X.Y + image:X + image:latest
   # Staging branch → image:staging-<sha> + image:staging
   push:
-    needs: [test, scan]
+    needs: [test, smoke, scan]
     if: >
       github.event_name == 'push' && (
         startsWith(github.ref, 'refs/tags/v') ||
