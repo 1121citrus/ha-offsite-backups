@@ -101,3 +101,15 @@ setup() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"Trivy DB update skipped"* ]]
 }
+
+@test "build defaults to Stage 3b smoke" {
+    run "${BUILD_SCRIPT}" --dry-run --no-lint --no-test --no-scan --no-advise
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Stage 3b: Smoke"* ]]
+}
+
+@test "build --no-smoke skips Stage 3b smoke" {
+    run "${BUILD_SCRIPT}" --dry-run --no-lint --no-test --no-smoke --no-scan --no-advise
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"Stage 3b: Smoke"* ]]
+}

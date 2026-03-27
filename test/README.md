@@ -21,17 +21,21 @@ all `.bats` files under `test/`.
 
 | File | What it tests |
 | --- | --- |
-| `test_build.bats` | `build` script option parsing and stage control flags |
-| `test_sync_mocked.bats` | Sync logic with a mocked `aws` CLI and stub filesystem |
-| `test_xform.bats` | Filename transformation: converts HA backup names to ISO-datetime canonical form |
+| `01-build.bats` | `build` script option parsing and stage control flags |
+| `02-xform.bats` | Filename transformation: converts HA backup names to ISO-datetime canonical form |
+| `03-sync-mocked.bats` | Sync logic with a mocked `aws` CLI and stub filesystem |
 
 ## Design notes
 
 - The automated tests do **not** require the application image.  They bind-mount
   the project source into the bats container and test the shell logic directly.
-- `test_xform.bats` is purely functional: it calls the filename-transform
+- CI also runs one image-level smoke test after `build` in
+  `.github/workflows/ci.yml`.  That smoke test executes the built image
+  artifact to catch packaging/runtime regressions that source-mounted tests
+  cannot detect.
+- `02-xform.bats` is purely functional: it calls the filename-transform
   function with known inputs and asserts the expected ISO datetime output.
-- `test_sync_mocked.bats` stubs the `aws` CLI to verify that the correct S3
+- `03-sync-mocked.bats` stubs the `aws` CLI to verify that the correct S3
   operations are invoked without network access or real credentials.
 - CI runs `docker run -i` (without `-t`) because a TTY is not available in
   GitHub Actions.  The local `test/run-all` uses `-it` for a nicer terminal
