@@ -33,13 +33,17 @@
 #                       Also skips advisements (stage 5) by default; pass --advise
 #                       after --no-scan to keep the advisory scans.
 #   --advise [ADVISEMENTS]
-#                       Run advisory scans. Optional comma-delimited list of advisements:
-#                       'grype', 'scout', 'dive', 'all', or any combination, e.g. 'grype,dive'
-#                       'all' selects every available advisement.
-#                       (default if no list given: 'grype,scout').
+#                       Run advisory scans. Comma-delimited list:
+#                       'grype', 'scout', 'dive', 'all', 'none', or any
+#                       combination, e.g. 'grype,dive'. 'all' selects
+#                       every available advisement. 'none' disables all
+#                       (equivalent to --no-advise). Default with no list
+#                       given: 'grype,scout'. Advisory scans are off by
+#                       default.
 #   --advice [ADVISEMENTS]
-#                       Compatibility alias for --advise.
-#   --no-advise         Skip all advisory scans (Grype, Docker Scout, and Dive).
+#                       Synonym for --advise.
+#   --no-advise         Disable all advisory scans (equivalent to
+#                       --advise none).
 #   --cache CACHE_RULES One-run cache controls for scanner DBs.
 #                       Rule format: 'reset=<targets>;skip-update=<targets>'
 #                       Targets: trivy, grype, all (comma-delimited)
@@ -97,8 +101,8 @@ PROVENANCE=true
 LINT=${BUILD_LINT:-true}
 TEST=${BUILD_TEST:-true}
 SCAN=${BUILD_SCAN:-true}
-ADVISE_GRYPE=true
-ADVISE_SCOUT=true
+ADVISE_GRYPE=false
+ADVISE_SCOUT=false
 ADVISE_DIVE=false
 _ADVISE_EXPLICIT=false   # set true when --advise or --no-advise is passed
 CACHE_RESET_TRIVY=false
@@ -246,6 +250,7 @@ while [[ $# -gt 0 ]]; do
                     scout)  ADVISE_SCOUT=true ;;
                     dive)   ADVISE_DIVE=true ;;
                     all)    ADVISE_GRYPE=true; ADVISE_SCOUT=true; ADVISE_DIVE=true ;;
+                    none)   ADVISE_GRYPE=false; ADVISE_SCOUT=false; ADVISE_DIVE=false ;;
                     *)      echo "Unknown advisement: $adv" >&2; exit 1 ;;
                 esac
             done
@@ -469,7 +474,7 @@ if [[ "${ADVISE_GRYPE}" == "true" ]]; then
         echo "    Grype DB update skipped for this run (--cache skip-update=grype)" >&2
         _grype_env+=(-e GRYPE_DB_AUTO_UPDATE=false)
     fi
-    _grype_tar=$(mktemp /tmp/grype-scan-XXXXXX.tar)
+    _grype_tar=$(mktemp /tmp/grype-scan-XXXXXX)
     # shellcheck disable=SC2064
     trap "rm -f '${_grype_tar}'" EXIT
     if [[ "${DRY_RUN}" == "true" ]]; then
@@ -505,7 +510,7 @@ fi
 # ---------------------------------------------------------------------------
 if [[ "${ADVISE_DIVE}" == "true" ]]; then
     echo "==> Stage 5c: Advise (Dive) ${full_image}:${VERSION}" >&2
-    _dive_tar=$(mktemp /tmp/dive-scan-XXXXXX.tar)
+    _dive_tar=$(mktemp /tmp/dive-scan-XXXXXX)
     # shellcheck disable=SC2064
     trap "rm -f '${_dive_tar}'" EXIT
     if [[ "${DRY_RUN}" == "true" ]]; then
