@@ -1,129 +1,508 @@
 #!/usr/bin/env bash
-# shellcheck shell=bash
-# shellcheck disable=SC1090,SC1091
 
-# An application specific service to rename Home Assistant backups and copy them off site.
+# ha-offsite-backups — An application specific service to rename Home Assistant
+#                      backups and copy them off site.
+#
 # Copyright (C) 2025 James Hanlon [mailto:jim@hanlonsoftware.com]
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-# 
+#
 # This program is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU Affero General Public License for more details.
-# 
+#
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# SYNOPSIS
+#   ha-offsite-backups [options]
+#
+# DESCRIPTION
+#   Rename Home Assistant backups and copy them off site.
+#
+#   Scheduler mode is triggered by any of: --cron, --cron-expression,
+#   --hourly, --daily, --weekly, --monthly, --yearly, or the
+#   CRON_EXPRESSION environment variable. In scheduler mode a crontab entry is
+#   installed and crond is exec'd; output and exit status are those of crond.
+#   The crond-spawned jobs run in CLI mode (no scheduling trigger).
+#
+#   Without any scheduling trigger the command runs one pass
+#   synchronously and exits; output and exit status are those of
+#   ha-offsite-backups itself.
+#
+#   Every env var listed below can be overridden by the corresponding CLI flag.
+#   CLI flags take precedence over environment values.
+#
+# OPTIONS
+#   -h,--help                        Display this help text
+#   -v,--version                     Display command version
+#
+#   Scheduler mode (any one triggers async/periodic execution):
+#   -c,--cron                        Enter scheduler mode using CRON_EXPRESSION
+#                                    (default: @daily)
+#   --cron-expression EXPR           Enter scheduler mode with schedule EXPR
+#                                    (env: CRON_EXPRESSION; implies --cron)
+#
+#   Rotation policy (each flag implies scheduler mode):
+#   --hourly N                       Hourly backups to keep
+#                                    (env: HOURLY; default: 24)
+#   --daily N                        Daily backups to keep
+#                                    (env: DAILY; default: 7)
+#   --weekly N                       Weekly backups to keep
+#                                    (env: WEEKLY; default: 4)
+#   --monthly N                      Monthly backups to keep
+#                                    (env: MONTHLY; default: 6)
+#   --yearly N                       Yearly backups to keep
+#                                    (env: YEARLY; default: always)
+#   --timestamp-pattern PATTERN      Regex for extracting timestamps
+#                                    (env: TIMESTAMP_PATTERN)
+#
+#   Bucket selection:
+#   -b,--bucket BUCKET               which S3 bucket to store backups to (env: BUCKET)
+#
+#   Execution control:
+#   --dryrun                         Enable dry-run; no deletions made
+#                                    (env: DRYRUN; default: true)
+#   --no-dryrun                      Disable dry-run; deletions are live
+#   -y,--yes                         Skip the interactive confirmation
+#                                    prompt when DRYRUN=false and stdin is
+#                                    a tty (env: YES; default: false)
+#
+#   AWS configuration:
+#   --aws-config FILE                AWS config file
+#                                    (env: AWS_CONFIG_FILE;
+#                                    default: /run/secrets/aws-config)
+#   --aws-extra-args ARGS            Extra args appended to every aws call
+#                                    (env: AWS_EXTRA_ARGS)
+#   --ha-offsite-backups-extra-args ARGS Extra args appended to every
+#                                    ha-offsite-backups invocation
+#                                    (env: HA_OFFSITE_BACKUPS_EXTRA_ARGS)
+#
+# ENVIRONMENT
+#   AWS_CONFIG_FILE          AWS configuration file
+#   AWS_EXTRA_ARGS           Additional aws CLI arguments
+#   BUCKET                   Single S3 bucket to rotate
+#   CRON_EXPRESSION          Schedule for --cron mode (default: @daily)
+#   DAILY                    Daily backups to keep (default: 7)
+#   DEBUG                    Enable bash -x tracing (default: false)
+#   DRYRUN                   Dry-run mode — no deletions (default: true)
+#   ENV                      Env-file path (default: ~/.env)
+#   HOURLY                   Hourly backups to keep (default: 24)
+#   MONTHLY                  Monthly backups to keep (default: 6)
+#   HA_OFFSITE_BACKUPS_EXTRA_ARGS  Additional ha-offsite-backups arguments
+#   TIMESTAMP_PATTERN        Regex for extracting timestamps from filenames
+#   WEEKLY                   Weekly backups to keep (default: 4)
+#   YEARLY                   Yearly backups to keep (default: always)
+#   YES                      Skip confirmation prompt (default: false)
+
+if command -v readlink >/dev/null 2>&1 && readlink -f "$(dirname "${0}")" >/dev/null 2>&1; then
+    bindir=$(readlink -f "$(dirname "${0}")")
+else
+    bindir=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd -P)
+fi
+echo "${PATH}" | grep -qF "${bindir}" || export PATH=${bindir}:${PATH}
+
+# shellcheck disable=SC1091
+# Allow tests to override the include dir via INCLUDE_DIR env var
+source "${INCLUDE_DIR:-/usr/local/include}/common-functions"
+
+ENV=${ENV:-${HOME:-/root}/.env}
+# shellcheck disable=SC1090
+[[ -r "${ENV}" ]] && source "${ENV}"
+
+set -o errexit -o errtrace -o nounset -o pipefail
+is_true "${DEBUG:=false}" && set -o xtrace -o verbose
+
+# Allow tests to override command locations (mocks)
+export AWS_CMD=${AWS_CMD:-aws}
+export HA_OFFSITE_BACKUPS_CMD=${HA_OFFSITE_BACKUPS_CMD:-/usr/local/bin/ha-offsite-backups}
+
+VERSION_FILE=/usr/local/share/ha-offsite-backups/version
+
+# ---------------------------------------------------------------------------
+# Function definitions (lexical order)
+# ---------------------------------------------------------------------------
+
+function cleanup() {
+    # Remove temporary work directories on exit.
+    rm -rf "${WORKDIR:-}" "${METADIR:-}" >/dev/null 2>&1 || true
+}
+
+function confirm_live_run() {
+    # Interactive confirmation gate for CLI mode with DRYRUN=false.
+    # Skipped automatically when:
+    #   - DRYRUN=true (no deletions will occur)
+    #   - stdin is not a tty (scripted / Docker / CI context)
+    #   - YES=true (--yes flag or env var)
+    is_true "${DRYRUN}" && return 0
+    [[ -t 0 ]] || return 0
+    is_true "${YES}" && return 0
+
+    warn "DRYRUN=false — this run will delete S3 objects"
+    echo "" >&2
+    echo "  Bucket:   ${BUCKET}" >&2
+    echo "  Schedule: hourly=${HOURLY} daily=${DAILY}" \
+         "weekly=${WEEKLY} monthly=${MONTHLY} yearly=${YEARLY}" >&2
+    echo "" >&2
+    printf 'Type "yes" to proceed, or press Enter to abort: ' >&2
+    local response
+    read -r response
+    echo "" >&2
+    [[ "${response}" == "yes" ]] || error "aborted by user"
+}
 
 function ha-offsite-backups() {
-    ENV=${ENV:-${HOME:-/root}/.env}
-    [[ -r "${ENV}" ]] && source "${ENV}"
+    local bucket=${1:?Need bucket}
 
-    source "${COMMON_FUNCTIONS_FILE:-/usr/local/include/common-functions}"
+    info "begin sync '${BACKUP_DIR}' to S3 bucket '${bucket}'"
 
-    set -o errexit -o errtrace -o nounset -o pipefail
-    is-true "${DEBUG:-false}" && set -o xtrace -o verbose
-
-    # Parse CLI arguments
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --dryrun)
-                DRYRUN=true
-                shift
-                ;;
-            --no-dryrun)
-                DRYRUN=false
-                shift
-                ;;
-            *)
-                error "Unknown option: $1"
-                return 1
-                ;;
-        esac
-    done
-
-    export AWS_CONFIG_FILE="${AWS_CONFIG_FILE:-/run/secrets/aws-config}"
-    export AWS_S3_BUCKET_NAME=${AWS_S3_BUCKET_NAME:?Need bucket}
-    export BACKUP_DIR=${BACKUP_DIR:=/backups}
-    export BUCKET=${AWS_S3_BUCKET_NAME}
-    export CRON_EXPRESSION="${CRON_EXPRESSION:=@daily}"
-    export DEBUG=${DEBUG:=false}
-    export DRYRUN=${DRYRUN:=false}
-
-    # Create a work directory
-    WORKDIR=$(mktemp -d)
-    # shellcheck disable=SC2064
-    trap "rm -rf '${WORKDIR}' >/dev/null 2>&1 || true" EXIT
-    cd "${WORKDIR}"
-
-    awsargs=--no-progress
-    is-true "${DRYRUN}" && awsargs="${awsargs} --dryrun"
-
-    info "begin sync '${BACKUP_DIR}' to S3 bucket '${BUCKET}'"
     # FIXME: Make -name parameter configurable
-    uri=s3://${BUCKET}
-    found=false
-    while IFS= read -r -d '' file; do
-        found=true
+    uri=s3://${bucket}
+    find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'Automatic_backup_*.tar' | while read -r file; do
         object_name=$(xform-backup-name "${file}")
         info "sync '${file}' with '${uri}/${object_name}'"
         ln -s "${file}" "${object_name}"
-    done < <(find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'Automatic_backup_*.tar' -print0)
-    if [[ "${found}" != true ]]; then
-        info "no matching backup files found in '${BACKUP_DIR}'"
-    fi
-    info "running aws s3 sync ${awsargs} '${WORKDIR}' ${uri}"
-    # shellcheck disable=SC2086
-    aws s3 sync ${awsargs} "${WORKDIR}" "${uri}" || {
-        local rc=$?
-        error "aws s3 sync exited with status ${rc}"
-    }
-    info "completed aws s3 sync ${awsargs} '${WORKDIR}' ${uri}"
-    info "finish sync '${BACKUP_DIR}' to S3 bucket '${BUCKET}'"
+    done
 
-    exit 0
+    # shellcheck disable=SC2154
+    info "running ${AWS_CMD} s3 sync ${awsargs} ${BACKUP_DIR} ${uri}"
+    # shellcheck disable=SC2086
+    ("${AWS_CMD}" s3 sync ${awsargs} "${WORKDIR}" "${uri}" || (error "${AWS_CMD} s3 sync exited with status $?" || true)) 2>&1 | info
+    info "completed '${AWS_CMD}' s3 sync ${awsargs} ${BACKUP_DIR} ${uri}"
+
+    info "finish sync '${BACKUP_DIR}' to S3 bucket '${bucket}'"
+}
+
+function run_scheduler() {
+    # Enter scheduler mode: write env file, install crontab, exec crond.
+    # CRON_EXPRESSION is intentionally omitted from the written env file so
+    # that the crond-invoked ha-offsite-backups runs in CLI mode rather than
+    # re-entering scheduler mode.
+    # Usage:
+    #   run_scheduler CRON_EXPR
+    # Arguments:
+    #   CRON_EXPR: cron schedule expression (e.g. "@daily", "0 4 * * *")
+    local cron_expr="${1:?Need cron expression}"
+
+    info "entering scheduler mode (${cron_expr})"
+
+    # Validate bucket config before committing to background operation.
+    [[ -n "${BUCKET}" ]] || \
+        error "need to specify either BUCKET to copy backups to"
+
+    # Write the env file consumed by crond-invoked jobs.
+    # Use printf '%q' for every value so that values containing quotes,
+    # parentheses, braces, or other shell-special characters are safely escaped.
+    # CRON_EXPRESSION is explicitly unset so that cron jobs sourcing this file
+    # do not inherit the variable and re-enter scheduler mode.
+    ENV=${ENV:-${HOME:-/root}/.env}
+    touch "${ENV}"
+    chmod 0600 "${ENV}"
+    # Capture the TIMESTAMP_PATTERN default in a plain variable first to avoid
+    # the nested-brace / quoting ambiguity inside ${parameter:=word}.
+    local _ts_default
+    _ts_default='(?P<year>\d{4})(?P<month>\d{2})(?P<day>\d{2})[Tt](?P<hour>\d{2})(?P<minute>\d{2})(?P<second>\d{2})'
+    {
+        printf 'export AWS_CONFIG_FILE=%q\n'           "${AWS_CONFIG_FILE}"
+        printf 'export AWS_EXTRA_ARGS=%q\n'            "${AWS_EXTRA_ARGS}"
+        printf 'export BUCKET=%q\n'                    "${BUCKET}"
+        printf 'export DAILY=%q\n'                     "${DAILY}"
+        printf 'export DEBUG=%q\n'                     "${DEBUG}"
+        printf 'export DELETE_IGNORED=%q\n'            "${DELETE_IGNORED}"
+        printf 'export DRYRUN=%q\n'                    "${DRYRUN}"
+        printf 'export GROUP_BY_TIMESTAMP=%q\n'        "${GROUP_BY_TIMESTAMP}"
+        printf 'export HOURLY=%q\n'                    "${HOURLY}"
+        printf 'export MONTHLY=%q\n'                   "${MONTHLY}"
+        printf 'export HA_OFFSITE_BACKUPS_EXTRA_ARGS=%q\n' "${HA_OFFSITE_BACKUPS_EXTRA_ARGS}"
+        printf 'export TIMESTAMP_PATTERN=%q\n'         "${TIMESTAMP_PATTERN:-${_ts_default}}"
+        printf 'export WEEKLY=%q\n'                    "${WEEKLY}"
+        printf 'export YEARLY=%q\n'                    "${YEARLY}"
+        printf 'unset CRON_EXPRESSION\n'
+    } > "${ENV}"
+    info "wrote env file ${ENV}"
+    info < "${ENV}"
+
+    # Ensure log directory exists
+    (mkdir -pv /var/log/ha-offsite-backups \
+        && chmod 0755 /var/log/ha-offsite-backups \
+        && touch /var/log/ha-offsite-backups/ha-offsite-backups.log) | info
+
+    # Install the crontab entry
+    local cmd=/usr/local/bin/ha-offsite-backups
+    info "installing cron entry: ${cron_expr} ${cmd}"
+    local _crontab
+    _crontab="/var/spool/cron/crontabs/$(id -un)"
+    printf '%s %s 2>&1\n' "${cron_expr}" "${cmd}" > "${_crontab}"
+    chmod 0644 "${_crontab}"
+    info "crontab: $(cat "${_crontab}")"
+
+    info "handing off to crond"
+    exec crond -l 2 -f
+}
+
+function show_help() {
+    # Display command usage help.
+    cat <<'EOF'
+Usage: ha-offsite-backups [options]
+
+ha-offsite-backups is a service to backup Home Assistant backup files stored
+in S3 buckets.
+
+Scheduler mode is triggered by any scheduling flag (--cron,
+--cron-expression, --hourly, --daily, --weekly, --monthly, --yearly) or the
+CRON_EXPRESSION environment variable. In scheduler mode a crontab entry is
+installed and crond is exec'd; output and exit status are those of crond.
+
+Without any scheduling trigger the command runs one rotation pass
+synchronously and exits.
+
+Options:
+  -h,--help                        Display this help text
+  -v,--version                     Display command version
+
+  Scheduling (any one triggers async/periodic execution via crond):
+  -c,--cron                        Enter scheduler mode using CRON_EXPRESSION
+                                   (default: @daily)
+  --cron-expression EXPR           Scheduler mode; use EXPR as the schedule
+                                   (env: CRON_EXPRESSION; implies --cron)
+  --hourly N                       Hourly backups to keep; implies --cron
+                                   (env: HOURLY; default: 24)
+  --daily N                        Daily backups to keep; implies --cron
+                                   (env: DAILY; default: 7)
+  --weekly N                       Weekly backups to keep; implies --cron
+                                   (env: WEEKLY; default: 4)
+  --monthly N                      Monthly backups to keep; implies --cron
+                                   (env: MONTHLY; default: 6)
+  --yearly N                       Yearly backups to keep; implies --cron
+                                   (env: YEARLY; default: always)
+  --timestamp-pattern PATTERN      Regex for extracting timestamps
+                                   (env: TIMESTAMP_PATTERN)
+
+  Bucket selection:
+  -b,--bucket BUCKET               S3 bucket to backup to (env: BUCKET)
+
+  Execution control:
+  --dryrun                         Enable dry-run; no deletions made
+                                   (env: DRYRUN; default: true)
+  --no-dryrun                      Disable dry-run; deletions are live
+  -y,--yes                         Skip the interactive confirmation
+                                   prompt when DRYRUN=false and stdin
+                                   is a tty (env: YES; default: false)
+  --group                          Group objects by timestamp so that all
+                                   files belonging to one backup event are
+                                   backupd as a unit (default)
+                                   (env: GROUP_BY_TIMESTAMP; default: true)
+  --no-group                       Disable grouping; backup each S3 object
+                                   independently (pre-grouping behaviour)
+
+  AWS configuration:
+  --aws-config FILE                AWS config file
+                                   (env: AWS_CONFIG_FILE;
+                                   default: /run/secrets/aws-config)
+  --aws-extra-args ARGS            Extra args appended to every aws call
+                                   (env: AWS_EXTRA_ARGS)
+  --ha-offsite-backups-extra-args ARGS Extra args appended to every
+                                   ha-offsite-backups invocation
+                                   (env: HA_OFFSITE_BACKUPS_EXTRA_ARGS)
+
+Dry-run is enabled by default. Pass --no-dryrun (or set DRYRUN=false)
+to perform actual deletions.
+
+Examples:
+  # One-shot dry-run rotation (CLI mode):
+  ha-offsite-backups --bucket my-backups
+
+  # One-shot live rotation with custom retention (CLI mode):
+  ha-offsite-backups --bucket my-backups --no-dryrun \
+      --daily 14 --weekly 8
+
+  # Scheduler mode — daily at midnight (default schedule):
+  ha-offsite-backups --cron --bucket my-backups
+
+  # Scheduler mode — custom schedule via flag (implies --cron):
+  ha-offsite-backups --cron-expression "0 4 * * *" \
+      --bucket my-backups --no-dryrun
+
+  # Scheduler mode — custom schedule via env var (implies --cron):
+  CRON_EXPRESSION="0 4 * * *" ha-offsite-backups --bucket my-backups
+
+EOF
+    local version
+    version=$(show_version)
+    if [[ "${version}" != "unknown" ]]; then
+        printf '[1121citrus/ha-offsite-backups %s]\n' "${version}" 
+    fi
+}
+
+function show_version() {
+    # Display the installed version of ha-offsite-backups.
+    cat "${VERSION_FILE}" 2>/dev/null || echo "unknown"
 }
 
 function xform-backup-name() {
-    local file=${1:?Need filename}
-    # Parse filenames like:
-    # Automatic_backup_2025.6.3_2025-07-06_05.35_00004800.tar
-    # -> 20250706T053500-home-assistant-automatic-backup-2025.6.3.tar
-    # Prefer a regex-based, robust extraction and a safe fallback.
-    local f
-    f=$(basename -- "${file}")
-    local re='^Automatic_backup_([^_]+)_([0-9]{4}-[0-9]{2}-[0-9]{2})_([0-9]{2}\.[0-9]{2})_([0-9]+)\.([^.]+)$'
-    if [[ "${f}" =~ ${re} ]]; then
-        local release="${BASH_REMATCH[1]}"
-        local date="${BASH_REMATCH[2]}"
-        local time="${BASH_REMATCH[3]}"
-        local nanos="${BASH_REMATCH[4]}"
-        local ext="${BASH_REMATCH[5]}"
-        local base
-        base="automatic-backup-${release,,}"
-        base="${base//_/-}"
-        local date_nodash="${date//-/}"
-        local time_nodot="${time//./}"
-        local seconds="${nanos:0:2}"
-        local time_full="${time_nodot}${seconds}"
-        printf "%sT%s-home-assistant-%s.%s" "${date_nodash}" "${time_full}" "${base}" "${ext}"
-    else
-        # Fallback to original heuristic when regex doesn't match.
-        local ext_fallback="${f##*.}"
-        local base_fallback
-        base_fallback=$(echo "${f}" | cut -d_ -f-3 | tr '[:upper:]' '[:lower:]' | tr '_' '-')
-        local date_fallback
-        date_fallback=$(echo "${f}" | cut -d_ -f4 | tr -d '-')
-        local time_fallback
-        time_fallback=$(echo "${f}" | cut -d_ -f5- | tr -d '._' | cut -c -6)
-        printf "%sT%s-home-assistant-%s.%s" "${date_fallback}" "${time_fallback}" "${base_fallback}" "${ext_fallback}"
-    fi
+    local file=${1:-Need filename}
+    # Automatic_backup_2025.6.3_2025-07-06_05.35_00004800.tar => 20250706T053500-home-assistant-automatic-backup-2025.6.3.tar
+    # FIXME: Make input and output patterns configurable
+    local f=
+    f=$(basename "${file}")
+    local base ext date time
+    base=$(echo "${f}" | cut -d_ -f-3 | tr '[:upper:]' '[:lower:]' | tr _ -)
+    ext=$(echo "${f}" | rev | cut -d. -f1 | rev)
+    date=$(echo "${f}" | cut -d_ -f4 | tr -d -- -)
+    time=$(echo "${f}" | cut -d_ -f5- | tr -d '._' | cut -c -6)
+    result="${date}T${time}-home-assistant-${base}.${ext}"
+    echo "${result}"
 }
 
-    # shellcheck disable=SC2128
-    if [ "${BASH_SOURCE}" = "${0}" ]; then
-    ha-offsite-backups "$@"
+# ---------------------------------------------------------------------------
+# Defaults from environment (CLI flags below override these).
+# ---------------------------------------------------------------------------
+export BUCKET=${BUCKET:=}
+export AWS_CONFIG_FILE=${AWS_CONFIG_FILE:=/run/secrets/aws-config}
+export AWS_EXTRA_ARGS="${AWS_EXTRA_ARGS:=}"
+# Capture whether CRON_EXPRESSION was set in the environment before applying
+# the default — a pre-set CRON_EXPRESSION implies scheduler mode.
+_cron_expression_from_env=false
+[[ -v CRON_EXPRESSION ]] && _cron_expression_from_env=true
+export CRON_EXPRESSION=${CRON_EXPRESSION:=@daily}
+export DRYRUN=${DRYRUN:=true}
+export GROUP_BY_TIMESTAMP=${GROUP_BY_TIMESTAMP:=true}
+YES=${YES:=false}
+export HA_OFFSITE_BACKUPS_EXTRA_ARGS=${HA_OFFSITE_BACKUPS_EXTRA_ARGS:=}
+export TIMESTAMP_PATTERN=${TIMESTAMP_PATTERN:='(?P<year>\d{4})(?P<month>\d{2})(?P<day>\d{2})[Tt](?P<hour>\d{2})(?P<minute>\d{2})(?P<second>\d{2})'}
+
+export HOURLY=${HOURLY:=24}
+export DAILY=${DAILY:=7}
+export WEEKLY=${WEEKLY:=4}
+export MONTHLY=${MONTHLY:=6}
+export YEARLY=${YEARLY:=always}
+
+# Note: backup is gated by is_false "${DRYRUN}" below; no --dryrun flag
+# is passed to aws.
+
+# ---------------------------------------------------------------------------
+# CLI argument parsing — flags override env defaults above.
+# ---------------------------------------------------------------------------
+CRON_MODE=false
+_bucket_set=false
+_bucket_list_set=false
+
+while [[ $# -gt 0 ]]; do
+    case "${1}" in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -v|--version)
+            show_version
+            exit 0
+            ;;
+        -c|--cron)
+            CRON_MODE=true
+            ;;
+        --cron-expression)
+            [[ $# -ge 2 ]] || error "option '${1}' requires an argument"
+            CRON_EXPRESSION="${2}"; CRON_MODE=true; shift
+            ;;
+        -b|--bucket)
+            [[ $# -ge 2 ]] || error "option '${1}' requires an argument"
+            BUCKET="${2}"; _bucket_set=true; shift
+            ;;
+        --aws-config)
+            [[ $# -ge 2 ]] || error "option '${1}' requires an argument"
+            AWS_CONFIG_FILE="${2}"; shift
+            ;;
+        --aws-extra-args)
+            [[ $# -ge 2 ]] || error "option '${1}' requires an argument"
+            AWS_EXTRA_ARGS="${2}"; shift
+            ;;
+        --dryrun)
+            DRYRUN=true
+            ;;
+        --no-dryrun)
+            DRYRUN=false
+            ;;
+        --yes|-y)
+            YES=true
+            ;;
+        --group)
+            GROUP_BY_TIMESTAMP=true
+            ;;
+        --no-group)
+            GROUP_BY_TIMESTAMP=false
+            ;;
+        --hourly)
+            [[ $# -ge 2 ]] || error "option '${1}' requires an argument"
+            HOURLY="${2}"; CRON_MODE=true; shift
+            ;;
+        --daily)
+            [[ $# -ge 2 ]] || error "option '${1}' requires an argument"
+            DAILY="${2}"; CRON_MODE=true; shift
+            ;;
+        --weekly)
+            [[ $# -ge 2 ]] || error "option '${1}' requires an argument"
+            WEEKLY="${2}"; CRON_MODE=true; shift
+            ;;
+        --monthly)
+            [[ $# -ge 2 ]] || error "option '${1}' requires an argument"
+            MONTHLY="${2}"; CRON_MODE=true; shift
+            ;;
+        --yearly)
+            [[ $# -ge 2 ]] || error "option '${1}' requires an argument"
+            YEARLY="${2}"; CRON_MODE=true; shift
+            ;;
+        --timestamp-pattern)
+            [[ $# -ge 2 ]] || error "option '${1}' requires an argument"
+            TIMESTAMP_PATTERN="${2}"; shift
+            ;;
+        --ha-offsite-backups-extra-args)
+            [[ $# -ge 2 ]] || error "option '${1}' requires an argument"
+            HA_OFFSITE_BACKUPS_EXTRA_ARGS="${2}"; shift
+            ;;
+        --)
+            shift; break
+            ;;
+        -*)
+            error "${EXIT_USAGE}" "unknown option: '${1}'"
+            ;;
+        *)
+            error "${EXIT_USAGE}" "unexpected argument: '${1}'"
+            ;;
+    esac
+    shift
+done
+
+export BUCKET CRON_EXPRESSION
+
+# CRON_EXPRESSION set in the environment (not just the compiled-in default)
+# implies scheduler mode, same as passing --cron or --cron-expression.
+if "${_cron_expression_from_env}"; then
+    CRON_MODE=true
 fi
+
+# ---------------------------------------------------------------------------
+# Dispatch: scheduler mode or CLI mode.
+# ---------------------------------------------------------------------------
+
+if [[ "${CRON_MODE}" == "true" ]]; then
+    # run_scheduler writes the env file and execs crond — never returns.
+    run_scheduler "${CRON_EXPRESSION}"
+fi
+
+# CLI mode: run one rotation pass and exit.
+[[ -n "${BUCKET}" ]] || \
+    error "need to specify either BUCKET to be backuped to"
+
+confirm_live_run
+
+WORKDIR=$(mktemp -d)
+trap cleanup EXIT
+
+info "begin '${bucket}' bucket rotation"
+ha-offsite-backups "${BUCKET:?Need BUCKET}"
+info "completed '${bucket}' bucket rotation"
+cleanup

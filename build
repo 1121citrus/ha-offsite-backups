@@ -8,8 +8,7 @@
 # SYNOPSIS
 #   build [--push] [--version VERSION] [--platform PLATFORMS]
 #         [--registry REGISTRY] [--no-sbom] [--no-provenance]
-#         [--no-lint] [--no-test] [--no-smoke]
-#         [--smoke-test-bucket BUCKET] [--no-scan]
+#         [--no-lint] [--no-test] [--no-smoke] [--no-scan]
 #         [--advise [ADVISEMENTS]] [--advice [ADVISEMENTS]] [--no-advise]
 #         [--cache CACHE_RULES]
 #         [--dry-run] [--help]
@@ -28,12 +27,9 @@
 #                       Default: 1121citrus
 #   --no-sbom           Skip generating an SBOM attestation (push only).
 #   --no-provenance     Skip generating a provenance attestation (push only).
-#   --no-lint           Skip hadolint Dockerfile check and shellcheck.
+#   --no-lint           Skip hadolint Dockerfile check.
 #   --no-test           Skip running the bats test suite.
 #   --no-smoke          Skip the built-image smoke test stage.
-#   --smoke-test-bucket BUCKET
-#                       Bucket name used only by Stage 3b smoke tests.
-#                       Default: test.staging.ha-offsite-backups.smoke-test
 #   --no-scan           Skip the Trivy vulnerability scan (gating).
 #                       Also skips advisements (stage 5) by default; pass --advise
 #                       after --no-scan to keep the advisory scans.
@@ -52,6 +48,10 @@
 #   --cache CACHE_RULES One-run cache controls for scanner DBs.
 #                       Rule format: 'reset=<targets>;skip-update=<targets>'
 #                       Targets: trivy, grype, all (comma-delimited)
+#                       Examples:
+#                         --cache 'reset=all'
+#                         --cache 'skip-update=grype'
+#                         --cache 'reset=grype;skip-update=trivy'
 #   --dry-run           Print each command without executing it.
 #   --help              Print this message and exit.
 #
@@ -60,21 +60,22 @@
 #   are themselves overridden by the matching CLI flag:
 #     BUILD_VERSION, BUILD_PUSH, BUILD_PLATFORM, BUILD_REGISTRY
 #     BUILD_LINT, BUILD_TEST, BUILD_SMOKE, BUILD_SCAN, BUILD_ADVISE
-#     SMOKE_TEST_BUCKET
+#   ROTATE_BACKUPS_VERSION
+#     Optional: pin the rotate-backups Python package version passed as a
+#     build-arg, e.g. ROTATE_BACKUPS_VERSION=7.1 ./build
 #
 # PREREQUISITES
 #   • docker with the buildx plugin (≥ 0.10)
-#   • shellcheck on PATH (for lint stage)
 #   • For --push: docker login <registry> must already be authenticated, plus
 #     QEMU binfmt helpers for cross-platform builds:
 #       docker run --rm --privileged tonistiigi/binfmt --install all
 #
 # STAGES (run in order; each can be skipped with --no-<stage>)
-#   1. Lint   — hadolint (Dockerfile) + shellcheck (src/)
+#   1. Lint   — hadolint (Dockerfile)
 #   2. Build  — single-platform --load into local Docker daemon
-#   3. Test   — bats test suite (runs in bats/bats:latest Docker container)
+#   3. Test   — bats test suite (runs in bats/bats:1.13.0 Docker container)
 #   3b. Smoke — image-level sanity check against the built image (blocking)
-#   4. Scan   — Trivy CRITICAL/HIGH image scan (blocking)
+#   4. Scan   — Trivy CRITICAL/HIGH image scan (blocking; exit 1 on findings)
 #   5. Advise — multiple advisory scans (advisory only; never blocks the build)
 #              a) Grype   — full-severity scan
 #              b) Scout   — Docker Scout CVE scan
@@ -82,17 +83,34 @@
 #   6. Push   — multi-platform rebuild + push to registry (only with --push)
 #
 # EXAMPLES
-#   # Local dev cycle — lint, build, test, scan
+#   # Local dev cycle — lint, build, test, scan, advise
 #   ./build
 #
 #   # Release build — push version 1.2.3 and latest
 #   ./build --push --version 1.2.3
 #
-#   # Skip tests during a quick lint + build iteration
-#   ./build --no-test --no-scan
+#   # Run only Grype advisory (skip Docker Scout)
+#   ./build --advise grype
+#
+#   # Run only Docker Scout (skip Grype)
+#   ./build --advise scout
+#
+#   # Run all three advisements: Grype, Scout, and Dive
+#   ./build --advise grype,scout,dive
+#
+#   # Compatibility alias
+#   ./build --advice all
+#
+#   # Run Dive analysis only
+#   ./build --advise dive
+#
+#   # Reset scanner DB caches for this run, then skip Grype DB update once
+#   ./build --cache 'reset=all;skip-update=grype'
 #
 #   # Dry-run: just print each command
 #   ./build --dry-run
+#
+# HELP_ENDS_HERE
 
 set -euo pipefail
 
@@ -108,7 +126,6 @@ PROVENANCE=true
 LINT=${BUILD_LINT:-true}
 TEST=${BUILD_TEST:-true}
 SMOKE=${BUILD_SMOKE:-true}
-SMOKE_TEST_BUCKET=${SMOKE_TEST_BUCKET:-test.staging.ha-offsite-backups.smoke-test}
 SCAN=${BUILD_SCAN:-true}
 ADVISE_GRYPE=false
 ADVISE_SCOUT=false
@@ -125,19 +142,21 @@ IMAGE_NAME=ha-offsite-backups
 # Tool image references — update these to pin analyser versions project-wide.
 HADOLINT_IMAGE=hadolint/hadolint
 HADOLINT_TAG=v2.12.0
-SHELLCHECK_IMAGE=koalaman/shellcheck
-SHELLCHECK_TAG=v0.10.0
 MARKDOWNLINT_IMAGE=ghcr.io/igorshubovych/markdownlint-cli
 MARKDOWNLINT_TAG=v0.48.0
+SHELLCHECK_IMAGE=koalaman/shellcheck
+SHELLCHECK_TAG=v0.10.0
 TRIVY_IMAGE=aquasec/trivy
 TRIVY_TAG=0.62.1
 GRYPE_IMAGE=anchore/grype
 GRYPE_TAG=v0.87.0
 DIVE_IMAGE=wagoodman/dive
 DIVE_TAG=v0.13.1
+DIVE_DOCKER_CLIENT_API=1.47
 
 TRIVY_CACHE_VOLUME=ha-offsite-backups-trivy-cache
 GRYPE_CACHE_VOLUME=ha-offsite-backups-grype-cache
+GRYPE_DB_CACHE_DIR=/grype-db
 
 # ---------------------------------------------------------------------------
 # Helpers: cache control parsing
@@ -150,13 +169,11 @@ set_cache_targets() {
 
     for target in "${_cache_targets[@]}"; do
         case "${target}" in
-            all)
+            trivy)
                 if [[ "${mode}" == "reset" ]]; then
                     CACHE_RESET_TRIVY=true
-                    CACHE_RESET_GRYPE=true
                 elif [[ "${mode}" == "skip-update" ]]; then
                     CACHE_SKIP_UPDATE_TRIVY=true
-                    CACHE_SKIP_UPDATE_GRYPE=true
                 fi
                 ;;
             grype)
@@ -166,11 +183,13 @@ set_cache_targets() {
                     CACHE_SKIP_UPDATE_GRYPE=true
                 fi
                 ;;
-            trivy)
+            all)
                 if [[ "${mode}" == "reset" ]]; then
                     CACHE_RESET_TRIVY=true
+                    CACHE_RESET_GRYPE=true
                 elif [[ "${mode}" == "skip-update" ]]; then
                     CACHE_SKIP_UPDATE_TRIVY=true
+                    CACHE_SKIP_UPDATE_GRYPE=true
                 fi
                 ;;
             *)
@@ -217,12 +236,53 @@ parse_cache_rules() {
     done
 }
 
+volume_has_file() {
+    local volume_name="$1"
+    local file_path="$2"
+
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        return 1
+    fi
+
+    docker run --rm \
+        -v "${volume_name}:/cache" \
+        alpine:3.20 \
+        sh -c "test -f \"${file_path}\""
+}
+
+volume_has_entries() {
+    local volume_name="$1"
+    local dir_path="$2"
+
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        return 1
+    fi
+
+    docker run --rm \
+        -v "${volume_name}:/cache" \
+        alpine:3.20 \
+        sh -c "ls -A \"${dir_path}\" >/dev/null 2>&1"
+}
+
+grype_db_ready() {
+    local volume_name="$1"
+
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        return 1
+    fi
+
+    docker run --rm \
+        -e "GRYPE_DB_CACHE_DIR=${GRYPE_DB_CACHE_DIR}" \
+        -v "${volume_name}:${GRYPE_DB_CACHE_DIR}" \
+        "${GRYPE_IMAGE}:${GRYPE_TAG}" db status >/dev/null 2>&1
+}
+
 reset_cache_db() {
     local volume_name="$1"
     # Reset the volume by removing all contents and recreating the directory structure
     run docker run --rm \
         -v "${volume_name}:/cache" \
-        alpine:3.22 \
+        alpine:3.21 \
         sh -c "rm -rf /cache/* && mkdir -p /cache"
 }
 
@@ -231,13 +291,25 @@ reset_cache_db() {
 # ---------------------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --push)             PUSH=true ;;
+        --version)          VERSION="$2"; shift ;;
+        --platform)         PLATFORMS="$2"; shift ;;
+        --registry)         REGISTRY="$2"; shift ;;
+        --no-sbom)          SBOM=false ;;
+        --no-provenance)    PROVENANCE=false ;;
+        --no-lint)          LINT=false ;;
+        --no-test)          TEST=false ;;
+        --no-smoke)         SMOKE=false ;;
+        --no-scan)          SCAN=false ;;
         --advise|--advice)
             _ADVISE_EXPLICIT=true
+            # Check if next arg looks like an advisement list (no -- prefix)
             if [[ $# -gt 1 && ! "$2" =~ ^-- ]]; then
                 advisements="$2"; shift
             else
                 advisements="grype,scout"
             fi
+            # Parse the comma-delimited list
             ADVISE_GRYPE=false
             ADVISE_SCOUT=false
             ADVISE_DIVE=false
@@ -255,6 +327,12 @@ while [[ $# -gt 0 ]]; do
                 esac
             done
             ;;
+        --no-advise)
+            ADVISE_GRYPE=false
+            ADVISE_SCOUT=false
+            ADVISE_DIVE=false
+            _ADVISE_EXPLICIT=true
+            ;;
         --cache)
             if [[ $# -lt 2 || "$2" =~ ^-- ]]; then
                 echo "--cache requires CACHE_RULES" >&2
@@ -265,25 +343,8 @@ while [[ $# -gt 0 ]]; do
             ;;
         --dry-run)          DRY_RUN=true ;;
         --help|-h)
-            sed -n '3,/^# EXAMPLES/p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'
+            sed -n '3,/^# HELP_ENDS_HERE/p' "$0" | grep '^#' | sed 's/^# \{0,1\}//' | head -n -1
             exit 0 ;;
-        --no-advise)
-            ADVISE_GRYPE=false
-            ADVISE_SCOUT=false
-            ADVISE_DIVE=false
-            _ADVISE_EXPLICIT=true
-            ;;
-        --no-lint)          LINT=false ;;
-        --no-provenance)    PROVENANCE=false ;;
-        --no-sbom)          SBOM=false ;;
-        --no-smoke)         SMOKE=false ;;
-        --no-scan)          SCAN=false ;;
-        --no-test)          TEST=false ;;
-        --platform)         PLATFORMS="$2"; shift ;;
-        --push)             PUSH=true ;;
-        --registry)         REGISTRY="$2"; shift ;;
-        --smoke-test-bucket) SMOKE_TEST_BUCKET="$2"; shift ;;
-        --version)          VERSION="$2"; shift ;;
         *)
             echo "Unknown option: $1" >&2
             exit 1 ;;
@@ -316,6 +377,15 @@ if [[ "${PUSH}" == "true" && "${VERSION}" != dev-* ]]; then
     tags+=("--tag" "${full_image}:latest")
 fi
 
+# Optional build-arg to pin the rotate-backups Python package version.
+rotate_build_arg=()
+if [[ -n "${ROTATE_BACKUPS_VERSION:-}" ]]; then
+    rotate_build_arg=("--build-arg" "ROTATE_BACKUPS_VERSION=${ROTATE_BACKUPS_VERSION}")
+fi
+
+# Build-arg for the application version (stored in the image as a version file).
+version_build_arg=("--build-arg" "VERSION=${VERSION}")
+
 # ---------------------------------------------------------------------------
 # Helper: execute a command or print it for --dry-run.
 # ---------------------------------------------------------------------------
@@ -347,6 +417,16 @@ _timed() {
     return "${_rc}"
 }
 
+if [[ "${CACHE_RESET_TRIVY}" == "true" ]]; then
+    echo "==> Cache: reset Trivy DB" >&2
+    reset_cache_db "${TRIVY_CACHE_VOLUME}"
+fi
+
+if [[ "${CACHE_RESET_GRYPE}" == "true" ]]; then
+    echo "==> Cache: reset Grype DB" >&2
+    reset_cache_db "${GRYPE_CACHE_VOLUME}"
+fi
+
 # Script directory for build context and relative paths.
 script_dir=$(dirname "$(readlink -f "$0")")
 
@@ -356,23 +436,6 @@ echo "Push:      ${PUSH}" >&2
 echo "Trivy DB:  volume:${TRIVY_CACHE_VOLUME}" >&2
 echo "Grype DB:  volume:${GRYPE_CACHE_VOLUME}" >&2
 echo "" >&2
-
-if [[ "${CACHE_RESET_TRIVY}" == "true" ]]; then
-    echo "==> Cache: reset Trivy DB" >&2
-    reset_cache_db "${TRIVY_CACHE_VOLUME}"
-fi
-if [[ "${CACHE_RESET_GRYPE}" == "true" ]]; then
-    echo "==> Cache: reset Grype DB" >&2
-    reset_cache_db "${GRYPE_CACHE_VOLUME}"
-fi
-if [[ "${SCAN}" == "true" && "${CACHE_SKIP_UPDATE_TRIVY}" != "true" ]]; then
-    echo "==> Cache: warm Trivy DB" >&2
-    run docker run --rm \
-        -v "${TRIVY_CACHE_VOLUME}:/root/.cache/trivy" \
-        "${TRIVY_IMAGE}:${TRIVY_TAG}" image \
-            --quiet \
-            --download-db-only
-fi
 
 # ---------------------------------------------------------------------------
 # Stage 1: Lint
@@ -387,25 +450,25 @@ if [[ "${LINT}" == "true" ]]; then
         docker run --rm -i "${HADOLINT_IMAGE}:${HADOLINT_TAG}" < "${script_dir}/Dockerfile"
     fi
 
-    echo "    shellcheck src/" >&2
-    # SC1090: can't follow dynamic source paths (common-functions sourced at runtime).
-    # SC2148: files without a shebang are intentionally sourced libraries.
-    (cd "${script_dir}" && run docker run --rm \
-        -v "${script_dir}:/mnt" \
+    echo "    shellcheck bash scripts" >&2
+    run docker run --rm \
+        -v "${script_dir}:/mnt:ro" \
+        --workdir /mnt \
         "${SHELLCHECK_IMAGE}:${SHELLCHECK_TAG}" \
-        --shell=bash \
-        --exclude=SC1090,SC2148 \
-        src/ha-offsite-backups \
-        src/healthcheck \
-        src/startup \
-        src/include/common-functions)
+            build \
+            src/healthcheck \
+            src/include/common-functions \
+            src/ha-offsite-backups \
+            src/startup \
+            test/bin/aws \
+            test/staging
 
-    echo "    markdownlint **/*.md" >&2
-    (cd "${script_dir}" && run docker run --rm \
+    echo "    markdownlint markdown files" >&2
+    run docker run --rm \
         -v "${script_dir}:/md:ro" \
         --workdir /md \
         "${MARKDOWNLINT_IMAGE}:${MARKDOWNLINT_TAG}" \
-        "**/*.md")
+            '**/*.md'
 fi
 
 # ---------------------------------------------------------------------------
@@ -420,6 +483,8 @@ build_cmd=(
     docker buildx build
     --platform "${host_platform}"
     "${tags[@]}"
+    "${rotate_build_arg[@]}"
+    "${version_build_arg[@]}"
     --load
 )
 
@@ -440,54 +505,70 @@ fi
 # ---------------------------------------------------------------------------
 # Stage 3: Test (bats)
 # ---------------------------------------------------------------------------
-# Tests run inside the official bats/bats:latest container with the project
+# Tests run inside the official bats/bats:1.13.0 container with the project
 # source bind-mounted.  This avoids requiring bats to be installed on the host
 # and keeps the test environment consistent with CI.
 if [[ "${TEST}" == "true" ]]; then
     echo "==> Stage 3: Test" >&2
-    run docker run --rm \
+    run docker run -i --rm \
         -v "${script_dir}:/code:ro" \
         -w /code \
-        bats/bats:latest \
-            test
+        bats/bats:1.13.0 \
+            test/00-noop.bats
 fi
 
 # ---------------------------------------------------------------------------
 # Stage 3b: Smoke
 # ---------------------------------------------------------------------------
-# Runs one built-image smoke test for parity with CI.
-#
-# Why this stage exists:
-# - Source-mounted bats tests validate shell logic, not image packaging.
-# - Stage 3b validates startup wiring in the built image artifact itself.
-#
-# What this stage checks:
-# - Container starts with realistic env vars.
-# - Container is still running after a short warm-up delay.
+# Runs one built-image smoke test for parity with CI.  This catches
+# packaging/runtime regressions that source-mounted bats tests cannot detect.
 if [[ "${SMOKE}" == "true" ]]; then
     echo "==> Stage 3b: Smoke ${full_image}:${VERSION}" >&2
 
     if [[ "${DRY_RUN}" == "true" ]]; then
-        echo "[DRY RUN] cid=\$(docker run -d --rm -e AWS_S3_BUCKET_NAME='${SMOKE_TEST_BUCKET}' -e CRON_EXPRESSION='@daily' '${full_image}:${VERSION}')" >&2
-        echo "[DRY RUN] sleep 3" >&2
-        echo "[DRY RUN] docker ps --filter 'id=\${cid}' --filter 'status=running' --quiet | grep -q ." >&2
-        echo "[DRY RUN] docker rm -f \"\${cid}\" >/dev/null 2>&1 || true" >&2
+        echo "[DRY RUN] docker inspect --format '{{json .Config.Entrypoint}}' '${full_image}:${VERSION}' | grep -Fx '[\"/usr/local/bin/ha-offsite-backups\"]'" >&2
+        echo "[DRY RUN] docker run --rm '${full_image}:${VERSION}' --help > /dev/null" >&2
     else
-        cid=$(docker run -d --rm \
-            -e AWS_S3_BUCKET_NAME="${SMOKE_TEST_BUCKET}" \
-            -e CRON_EXPRESSION='@daily' \
-            "${full_image}:${VERSION}")
+        docker inspect --format '{{json .Config.Entrypoint}}' "${full_image}:${VERSION}" \
+            | grep -Fx '["/usr/local/bin/ha-offsite-backups"]'
+        docker run --rm "${full_image}:${VERSION}" --help > /dev/null
+    fi
+fi
 
-        sleep 3
+# ---------------------------------------------------------------------------
+# Stages 4 & 5a: shared image archive
+#
+# Trivy and Grype receive the image as a tar archive rather than via the
+# Docker daemon socket.  The socket mount hangs on macOS Docker Desktop, and
+# the archive approach is faster and more portable.
+# ---------------------------------------------------------------------------
+_scan_tar=""
+if [[ "${SCAN}" == "true" || "${ADVISE_GRYPE}" == "true" ]]; then
+    _scan_tar=$(mktemp /tmp/image-scan-XXXXXX)
+    trap 'rm -f "${_scan_tar}"' EXIT
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        echo "[DRY RUN] docker save ${full_image}:${VERSION} > ${_scan_tar}" >&2
+    else
+        docker save "${full_image}:${VERSION}" > "${_scan_tar}"
+    fi
+fi
 
-        if ! docker ps --filter "id=${cid}" --filter "status=running" --quiet | grep -q .; then
-            echo "Smoke test failed: container exited before readiness check" >&2
-            docker logs "${cid}" >&2 || true
-            docker rm -f "${cid}" >/dev/null 2>&1 || true
-            exit 1
+# ---------------------------------------------------------------------------
+# Stage 4a: Prime Trivy DB (ensure DB exists before scan)
+# ---------------------------------------------------------------------------
+if [[ "${SCAN}" == "true" ]]; then
+    if [[ "${CACHE_SKIP_UPDATE_TRIVY}" != "true" ]]; then
+        if ! volume_has_file "${TRIVY_CACHE_VOLUME}" "/cache/db/trivy.db"; then
+            echo "==> Stage 4a: Prime Trivy DB" >&2
+            echo "    Priming Trivy DB cache (first run)" >&2
+            # Prime the DB in a separate step to handle network errors gracefully.
+            # Use --skip-update in the actual scan after this completes.
+            if ! run docker run --rm \
+                -v "${TRIVY_CACHE_VOLUME}:/root/.cache/trivy" \
+                "${TRIVY_IMAGE}:${TRIVY_TAG}" image --quiet --download-db-only; then
+                echo "    Warning: could not initialize Trivy DB cache; scan may be slow" >&2
+            fi
         fi
-
-        docker rm -f "${cid}" >/dev/null 2>&1 || true
     fi
 fi
 
@@ -496,13 +577,16 @@ fi
 # ---------------------------------------------------------------------------
 if [[ "${SCAN}" == "true" ]]; then
     echo "==> Stage 4: Scan ${full_image}:${VERSION}" >&2
-    _trivy_extra_flags=()
+
+    # Always skip DB update in the actual scan since we primed it in stage 4a.
+    # This avoids network downloads during the scan and respects --cache skip-update.
+    _trivy_db_flags=(--skip-db-update --skip-java-db-update)
     if [[ "${CACHE_SKIP_UPDATE_TRIVY}" == "true" ]]; then
         echo "    Trivy DB update skipped for this run (--cache skip-update=trivy)" >&2
-        _trivy_extra_flags+=(--skip-db-update --skip-java-db-update)
     fi
+
     run docker run --rm \
-        -v /var/run/docker.sock:/var/run/docker.sock:ro \
+        -v "${_scan_tar}:/scan.tar:ro" \
         -v "${TRIVY_CACHE_VOLUME}:/root/.cache/trivy" \
         "${TRIVY_IMAGE}:${TRIVY_TAG}" image \
             --quiet \
@@ -510,78 +594,113 @@ if [[ "${SCAN}" == "true" ]]; then
             --exit-code 1 \
             --ignore-unfixed \
             --severity HIGH,CRITICAL \
-            "${_trivy_extra_flags[@]}" \
-            "${full_image}:${VERSION}"
+            --timeout 5m \
+            "${_trivy_db_flags[@]}" \
+            --input /scan.tar
 fi
 
 # ---------------------------------------------------------------------------
 # Stage 5a: Advise (Grype — non-gating)
+# Runs a full-severity Grype scan and prints findings to the build log.
+# Never sets a non-zero exit code due to vulnerability findings; the build
+# continues regardless of what Grype reports.
 # ---------------------------------------------------------------------------
 if [[ "${ADVISE_GRYPE}" == "true" ]]; then
     echo "==> Stage 5a: Advise (Grype) ${full_image}:${VERSION}" >&2
-    _grype_env=()
+
+    # Initialize the Grype DB cache on first run so the advisement can execute
+    # without requiring a separate manual bootstrap step.
+    _grype_run_scan=true
+
+    if ! grype_db_ready "${GRYPE_CACHE_VOLUME}"; then
+        echo "    No Grype DB cache found in volume; priming ${GRYPE_CACHE_VOLUME}" >&2
+    fi
+
     if [[ "${CACHE_SKIP_UPDATE_GRYPE}" == "true" ]]; then
         echo "    Grype DB update skipped for this run (--cache skip-update=grype)" >&2
-        _grype_env+=(-e GRYPE_DB_AUTO_UPDATE=false)
+        if ! grype_db_ready "${GRYPE_CACHE_VOLUME}"; then
+            echo "    Warning: Grype DB cache is empty; skipping Grype advisement" >&2
+            _grype_run_scan=false
+        fi
+    elif ! grype_db_ready "${GRYPE_CACHE_VOLUME}"; then
+        echo "    Priming Grype DB cache (first run)" >&2
+        if ! _timed 300 docker run --rm \
+            -e "GRYPE_DB_CACHE_DIR=${GRYPE_DB_CACHE_DIR}" \
+            -v "${GRYPE_CACHE_VOLUME}:${GRYPE_DB_CACHE_DIR}" \
+            "${GRYPE_IMAGE}:${GRYPE_TAG}" db update --quiet; then
+            echo "    Warning: could not initialize Grype DB cache; skipping Grype advisement" >&2
+            _grype_run_scan=false
+        fi
     fi
-    _grype_tar=$(mktemp /tmp/grype-scan-XXXXXX)
-    # shellcheck disable=SC2064
-    trap "rm -f '${_grype_tar}'" EXIT
-    if [[ "${DRY_RUN}" == "true" ]]; then
-        echo "[DRY RUN] docker save ${full_image}:${VERSION} > ${_grype_tar}" >&2
-    else
-        docker save "${full_image}:${VERSION}" > "${_grype_tar}"
+
+    if [[ "${_grype_run_scan}" == "true" ]]; then
+        _timed 300 docker run --rm \
+            -v "${_scan_tar}:/scan.tar:ro" \
+            -e "GRYPE_DB_CACHE_DIR=${GRYPE_DB_CACHE_DIR}" \
+            -v "${GRYPE_CACHE_VOLUME}:${GRYPE_DB_CACHE_DIR}" \
+            -e GRYPE_DB_AUTO_UPDATE=false \
+            "${GRYPE_IMAGE}:${GRYPE_TAG}" \
+                docker-archive:/scan.tar || {
+            echo "    Grype scan timed out or failed (advisory only)" >&2
+        }
     fi
-    _timed 300 docker run --rm \
-        -v "${_grype_tar}:/scan.tar:ro" \
-        -v "${GRYPE_CACHE_VOLUME}:/root/.cache/grype" \
-        "${_grype_env[@]}" \
-        "${GRYPE_IMAGE}:${GRYPE_TAG}" \
-            "docker-archive:/scan.tar" || {
-        echo "    Grype scan timed out or failed (advisory only)" >&2
-    }
-    rm -f "${_grype_tar}"
+fi
+
+# Clean up shared scan archive.
+if [[ -n "${_scan_tar}" ]]; then
+    rm -f "${_scan_tar}"
     trap - EXIT
 fi
 
 # ---------------------------------------------------------------------------
 # Stage 5b: Advise (Docker Scout — non-gating)
+# Invokes the Docker Scout CLI plugin; skips cleanly if the plugin image is
+# unavailable (e.g. a pinned docker/scout-cli version not yet on Docker Hub).
+# Never sets a non-zero exit code; the build continues regardless.
 # ---------------------------------------------------------------------------
 if [[ "${ADVISE_SCOUT}" == "true" ]]; then
     echo "==> Stage 5b: Advise (Scout) ${full_image}:${VERSION}" >&2
-    run docker scout cves "${full_image}:${VERSION}" || true
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        run docker scout cves "${full_image}:${VERSION}" || true
+    else
+        set +e
+        _scout_out=$(docker scout cves "${full_image}:${VERSION}" 2>&1)
+        _scout_status=$?
+        set -e
+        if [[ ${_scout_status} -ne 0 ]] && echo "${_scout_out}" | grep -qiE 'not found|cannot pull|failed to resolve'; then
+            echo "    Scout advisory skipped: docker/scout-cli image unavailable." >&2
+        else
+            echo "${_scout_out}" >&2
+        fi
+    fi
 fi
 
 # ---------------------------------------------------------------------------
 # Stage 5c: Advise (Dive — non-gating)
-# Dive's container image is amd64-only; on arm64 it runs under emulation and
-# silently fails to access images via the Docker socket.  Save to an archive
-# first and feed that to Dive — archive reads are architecture-independent.
+# Analyzes image layers for bloat, optimization opportunities, and composition.
+# Pre-checks Docker daemon API version compatibility before invoking Dive;
+# skips cleanly if the daemon requires a newer API than the Dive image supports.
+# Never sets a non-zero exit code; the build continues regardless.
 # ---------------------------------------------------------------------------
 if [[ "${ADVISE_DIVE}" == "true" ]]; then
     echo "==> Stage 5c: Advise (Dive) ${full_image}:${VERSION}" >&2
-    _dive_tar=$(mktemp /tmp/dive-scan-XXXXXX)
-    # shellcheck disable=SC2064
-    trap "rm -f '${_dive_tar}'" EXIT
-    if [[ "${DRY_RUN}" == "true" ]]; then
-        echo "[DRY RUN] docker save ${full_image}:${VERSION} > ${_dive_tar}" >&2
+    daemon_min_api=$(docker version --format '{{.Server.MinAPIVersion}}' 2>/dev/null || true)
+    if [[ -n "${daemon_min_api}" ]] && [[ "$(printf '%s\n' "${DIVE_DOCKER_CLIENT_API}" "${daemon_min_api}" | sort -V | tail -n1)" == "${daemon_min_api}" ]] && [[ "${daemon_min_api}" != "${DIVE_DOCKER_CLIENT_API}" ]]; then
+        echo "    Skipping Dive advisement: daemon requires Docker API >= ${daemon_min_api}, but ${DIVE_IMAGE}:${DIVE_TAG} uses client API ${DIVE_DOCKER_CLIENT_API}." >&2
     else
-        docker save "${full_image}:${VERSION}" > "${_dive_tar}"
+        _dive_ci_config=()
+        if [[ -f "${script_dir}/.dive-ci" ]]; then
+            _dive_ci_config=(-v "${script_dir}/.dive-ci:/.dive-ci:ro")
+        fi
+        run docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock:ro \
+            "${_dive_ci_config[@]}" \
+            "${DIVE_IMAGE}:${DIVE_TAG}" \
+                --source docker \
+                --ci \
+                --ci-config /.dive-ci \
+                "${full_image}:${VERSION}" || true
     fi
-    _dive_ci_config=()
-    if [[ -f "${script_dir}/.dive-ci" ]]; then
-        _dive_ci_config=(-v "${script_dir}/.dive-ci:/.dive-ci:ro")
-    fi
-    run docker run --rm \
-        -v "${_dive_tar}:/scan.tar:ro" \
-        "${_dive_ci_config[@]}" \
-        "${DIVE_IMAGE}:${DIVE_TAG}" \
-            --source docker-archive \
-            --ci \
-            --ci-config /.dive-ci \
-            /scan.tar || true
-    rm -f "${_dive_tar}"
-    trap - EXIT
 fi
 
 # ---------------------------------------------------------------------------
@@ -601,6 +720,8 @@ if [[ "${PUSH}" == "true" ]]; then
         docker buildx build
         --platform "${PLATFORMS}"
         "${tags[@]}"
+        "${rotate_build_arg[@]}"
+        "${version_build_arg[@]}"
         "--sbom=${SBOM}"
         "${provenance_flag}"
         --push

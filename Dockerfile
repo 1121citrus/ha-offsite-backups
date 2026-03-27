@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# An application specific service to rename Home Assistant backups and copy them off site.
+# Yet another version of `rotate-backups` but this time applied to an AWS S3 backup archive bucket.
 # Copyright (C) 2025 James Hanlon [mailto:jim@hanlonsoftware.com]
 #
 # This program is free software: you can redistribute it and/or modify
@@ -16,11 +16,28 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-FROM alpine:3.22
-
+ARG PYTHON_VERSION=3.12
+ARG ALPINE_VERSION=3.22
 ARG VERSION=dev
+
+FROM python:${PYTHON_VERSION}-alpine${ALPINE_VERSION}
+
+# Re-declare build args after FROM so they are visible in the build stage.
+ARG PYTHON_VERSION
+ENV PYTHON_VERSION=${PYTHON_VERSION}
+
+ARG ALPINE_VERSION
+ENV ALPINE_VERSION=${ALPINE_VERSION}
+
+ARG VERSION
+ENV VERSION=${VERSION}
+
+ARG HA_OFFSITE_BACKUPS_VERSION
+ENV HA_OFFSITE_BACKUPS_VERSION=${HA_OFFSITE_BACKUPS_VERSION}
+
 ARG GIT_COMMIT=unknown
 ARG BUILD_DATE=unknown
+
 LABEL org.opencontainers.image.title="ha-offsite-backups" \
       org.opencontainers.image.description="Rename Home Assistant backups and copy them off site to AWS S3" \
       org.opencontainers.image.url="https://github.com/1121citrus/ha-offsite-backups" \
@@ -63,4 +80,6 @@ USER ha-offsite-backups
 
 HEALTHCHECK --interval=60s --timeout=5s --retries=3 CMD ["/usr/local/bin/healthcheck"]
 
-CMD [ "/usr/local/bin/startup" ]
+WORKDIR /
+
+ENTRYPOINT ["/usr/local/bin/ha-offsite-backups"]

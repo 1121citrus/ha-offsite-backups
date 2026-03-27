@@ -1,13 +1,22 @@
 #!/usr/bin/env bash
 
-# test/staging - final integration tests for ha-offsite-backups on staging.
+# test/staging — functional tests for ha-offsite-backups against live AWS.
 #
 # Copyright (C) 2025 James Hanlon [mailto:jim@hanlonsoftware.com]
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# These tests execute the built image end-to-end with no stubs.
-# Tests that require a live S3 bucket are skipped (not failed) when
-# AWS_S3_BUCKET_NAME is unset or AWS credentials are unavailable.
+# These tests exercise the ha-offsite-backups CLI end-to-end with no stubs.
+# Tests that require a live S3 bucket are skipped (not failed) when BUCKET
+# is unset or AWS credentials are unavailable.
+#
+# IAM permissions required:
+#   Production tests (test_staging_cli_dryrun, test_staging_cron_fires):
+#     s3:ListBucket       on arn:aws:s3:::${BUCKET}
+#     s3:ListBucket       on arn:aws:s3:::${BUCKET}/*
+#   End-to-end correctness test (test_staging_rotation_e2e):
+#     All of the above PLUS on arn:aws:s3:::test.staging.backups.ha-offsite-backups-*:
+#     s3:CreateBucket, s3:DeleteBucket
+#     s3:PutObject, s3:GetObject, s3:ListBucket, s3:DeleteObject
 #
 # SYNOPSIS
 #   test/staging [options] [IMAGE]
@@ -15,62 +24,99 @@
 # OPTIONS
 #   IMAGE                     Docker image to test (positional; also --image)
 #   --image IMAGE             Docker image to test (env: IMAGE)
-#   --bucket BUCKET           S3 bucket name (env: AWS_S3_BUCKET_NAME)
-#   --backup-dir DIR          Host directory with HA backup files
-#                             (env: BACKUP_DIR; default: auto-generated fixture)
+#   --bucket BUCKET           S3 bucket to rotate (env: BUCKET)
+#   --bucket-list LIST        Space-separated bucket list (env: BUCKET_LIST)
 #   --aws-config FILE         AWS config file path
-#                             (env: AWS_CONFIG_FILE; default: ~/.secrets/aws-config)
-#   --dryrun                  Enable dry-run for sync tests (default)
-#   --no-dryrun               Disable dry-run (real S3 writes)
-#   --scan                    Run Trivy HIGH/CRITICAL scan (default)
+#                             (env: AWS_CONFIG_FILE;
+#                             default: ~/.secrets/aws-config)
+#   --dryrun                  Enable dry-run for production bucket tests
+#                             (env: DRYRUN; default: true)
+#   --no-dryrun               Disable dry-run for production bucket tests
+#   --scan                    Run Trivy HIGH/CRITICAL scan on the image
+#                             (env: STAGING_SCAN; default: true)
 #   --no-scan                 Skip Trivy scan; also implies --no-advise unless
-#                             --advise is provided explicitly
-#   --advise [ADVISEMENTS]    Advisory scans: grype,scout,dive,all
-#                             (default if given without list: grype,scout)
-#   --no-advise               Disable all advisory scans
+#                             --advise is given explicitly
+#   --advise [ADVISEMENTS]    Run advisory scans. Optional comma-delimited list:
+#                             'grype', 'scout', 'dive', 'all', or any combination.
+#                             'all' selects every available advisement.
+#                             (default if no list given: 'grype,scout')
+#                             Omitting the option entirely defaults to all advisements.
+#                             (env: STAGING_ADVISE for Grype; default: true)
+#   --no-advise               Skip all advisory scans (Grype, Scout, and Dive)
 #   --yes                     Skip the "yes" confirmation prompt
-#   --test TEST               Run only one named test function
-#   -h, --help                Print this help and exit
+#   --skip-e2e                Skip test_staging_rotation_e2e
+#   --test TEST               Run only the named test function
+#   -h, --help                Print this message and exit
 #
 # ENVIRONMENT
-#   IMAGE                     Docker image to test
-#   AWS_S3_BUCKET_NAME        S3 bucket used by integration tests
-#   BACKUP_DIR                Host directory with backup files to mount read-only
-#   AWS_CONFIG_FILE           Path to AWS config file
+#   IMAGE              Docker image to test
+#   BUCKET             S3 bucket to rotate (single bucket)
+#   BUCKET_LIST        Space-separated list of buckets (default: BUCKET)
+#   AWS_CONFIG_FILE    Path to AWS config file
 #   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
-#                             Inline AWS credentials (alternative to AWS_CONFIG_FILE)
-#   DRYRUN                    true/false for integration tests (default: true)
-#   STAGING_SCAN              true/false controls Trivy scan (default: true)
-#   STAGING_ADVISE            true/false controls Grype advisory scan (default: true)
-#   DOCKER_RUN_ARGS           Extra args appended to each docker run
+#                      Inline AWS credentials (alternative to AWS_CONFIG_FILE)
+#   DRYRUN             true = dry-run for production bucket tests (default)
+#                      false = live deletions (test/staging buckets only)
+#   STAGING_SCAN       true/false — controls Trivy scan (default: true)
+#   STAGING_ADVISE     true/false — controls Grype advisory scan (default: true,
+#                      or false when STAGING_SCAN=false); Scout and Dive default
+#                      to true and false respectively and have no env-var override
+#   DOCKER_RUN_ARGS    Extra flags appended to every docker run invocation
 #
 # EXAMPLES
-#   # Image-only tests plus scans (no AWS required):
+#   # AWS-independent smoke tests (no credentials needed):
 #   test/staging 1121citrus/ha-offsite-backups:latest
 #
-#   # Full staging integration run against real bucket in dry-run mode:
-#   test/staging --bucket test.staging.ha-offsite-backups \
+#   # Quick iteration — skip scan and advise:
+#   test/staging --no-scan 1121citrus/ha-offsite-backups:latest
+#
+#   # Skip Trivy but still run Grype advisory:
+#   test/staging --no-scan --advise grype 1121citrus/ha-offsite-backups:latest
+#
+#   # Run only Grype advisory (skip Scout):
+#   test/staging --advise grype 1121citrus/ha-offsite-backups:latest
+#
+#   # Run all three advisements: Grype, Scout, and Dive:
+#   test/staging --advise grype,scout,dive 1121citrus/ha-offsite-backups:latest
+#
+#   # Full test suite against a dedicated test bucket:
+#   test/staging --bucket test.my-backups \
 #       --aws-config ~/.secrets/aws-config \
 #       1121citrus/ha-offsite-backups:latest
 #
-#   # Fast iteration:
-#   test/staging --no-scan --no-advise 1121citrus/ha-offsite-backups:latest
+#   # Skip confirmation prompt (CI / scripted use):
+#   test/staging --bucket test.my-backups --yes \
+#       1121citrus/ha-offsite-backups:latest
+#
+#   # Run only the end-to-end rotation correctness test:
+#   test/staging --bucket test.my-backups \
+#       --test test_staging_rotation_e2e \
+#       1121citrus/ha-offsite-backups:latest
+#
+#   # Skip e2e test when credentials lack s3:CreateBucket:
+#   test/staging --bucket my-backups --skip-e2e \
+#       1121citrus/ha-offsite-backups:latest
 
 set -euo pipefail
 
+# ---------------------------------------------------------------------------
+# Defaults — overridden by environment variables, then by CLI flags.
+# ---------------------------------------------------------------------------
 IMAGE="${IMAGE:-}"
-AWS_S3_BUCKET_NAME="${AWS_S3_BUCKET_NAME:-}"
-BACKUP_DIR="${BACKUP_DIR:-}"
+BUCKET="${BUCKET:-}"
+BUCKET_LIST="${BUCKET_LIST:-}"
 AWS_CONFIG_FILE="${AWS_CONFIG_FILE:-}"
 DRYRUN="${DRYRUN:-true}"
+_YES=false
+_SKIP_E2E=false
+_ONLY_TEST=""
 _SCAN="${STAGING_SCAN:-true}"
 _ADVISE_GRYPE="${STAGING_ADVISE:-true}"
 _ADVISE_SCOUT=true
 _ADVISE_DIVE=false
-_ADVISE_EXPLICIT=false
-_ONLY_TEST=""
-_YES=false
+_ADVISE_EXPLICIT=false   # set to true when --advise or --no-advise is passed
 
+# Tool image refs — keep in sync with the top-level build script.
 TRIVY_IMAGE=aquasec/trivy
 TRIVY_TAG=0.62.1
 GRYPE_IMAGE=anchore/grype
@@ -78,46 +124,21 @@ GRYPE_TAG=v0.87.0
 DIVE_IMAGE=wagoodman/dive
 DIVE_TAG=v0.13.1
 
+# Named Docker volumes for scanner DB caches (avoid host-path coupling).
 TRIVY_CACHE_VOLUME=ha-offsite-backups-staging-trivy-cache
 GRYPE_CACHE_VOLUME=ha-offsite-backups-staging-grype-cache
 
-_SKIP_COUNT=0
-_TEST_BACKUP_DIR=""
-_SCAN_TAR=""
-
 show_help() {
+    # Extract the header comment from SYNOPSIS through EXAMPLES (inclusive).
     sed -n '/^# SYNOPSIS/,/^set -/p' "$0" \
         | grep '^#' \
         | sed 's/^# \{0,1\}//'
 }
 
-_skip() {
-    echo "SKIP '${FUNCNAME[1]}': $*"
-    (( ++_SKIP_COUNT )) || true
-}
-
-_aws_available() {
-    [[ -n "${AWS_S3_BUCKET_NAME:-}" ]] && {
-        [[ -r "${_aws_cfg:-/nonexistent}" ]] || [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]
-    }
-}
-
-make_fixture_backups() {
-    local dir
-    dir=$(mktemp -d)
-    cat > "${dir}/Automatic_backup_2025.6.3_2025-07-16_05.34_36783615.tar" <<'EOF'
-fixture-one
-EOF
-    cat > "${dir}/Automatic_backup_2025.6.3_2025-07-15_09.10_35433883.tar" <<'EOF'
-fixture-two
-EOF
-    _TEST_BACKUP_DIR="${dir}"
-}
-
 setup() {
     [[ -n "${IMAGE}" ]] || {
         echo "ERROR: IMAGE is not set" >&2
-        echo "       Pass positional IMAGE or --image IMAGE" >&2
+        echo "       Pass it as a positional arg or use --image IMAGE" >&2
         return 1
     }
     docker image inspect "${IMAGE}" > /dev/null 2>&1 || {
@@ -126,146 +147,396 @@ setup() {
         return 1
     }
 
-    if ! docker run --rm --entrypoint test "${IMAGE}" \
-        -x /usr/local/bin/ha-offsite-backups > /dev/null 2>&1; then
-        echo "ERROR: /usr/local/bin/ha-offsite-backups missing in ${IMAGE}" >&2
+    # Verify the image uses the exec-form ENTRYPOINT, not the legacy
+    # shell-form ENTRYPOINT ["/bin/sh","-c"] + CMD ["/usr/local/bin/startup"].
+    # With the legacy form, CLI args like --help replace CMD and are passed to
+    # /bin/sh as options, causing all CLI-flag tests to fail with exit 2.
+    local ep
+    ep=$(docker inspect "${IMAGE}" --format '{{json .Config.Entrypoint}}' \
+             2>/dev/null || echo "")
+    if [[ "${ep}" != '["/usr/local/bin/ha-offsite-backups"]' ]]; then
+        echo "ERROR: unexpected ENTRYPOINT in ${IMAGE}" >&2
+        echo "       Got:      ${ep}" >&2
+        echo "       Expected: [\"/usr/local/bin/ha-offsite-backups\"]" >&2
+        echo "       The Hub image is stale. Rebuild and test against the" >&2
+        echo "       local dev image: ./build --no-scan" >&2
         return 1
     fi
 
+    # Verify the entrypoint exists before any test runs.
+    # Exit 127 from individual tests is confusing; a clear setup failure
+    # is not.  This catches a stale 'latest' image before publishing a new
+    # version — rebuild with: IMAGE=... ./build --no-scan
     if ! docker run --rm --entrypoint test "${IMAGE}" \
-        -x /usr/local/bin/startup > /dev/null 2>&1; then
-        echo "ERROR: /usr/local/bin/startup missing in ${IMAGE}" >&2
+            -x /usr/local/bin/ha-offsite-backups > /dev/null 2>&1; then
+        echo "ERROR: /usr/local/bin/ha-offsite-backups not found in ${IMAGE}" >&2
+        echo "       Rebuild: ./build --no-scan" >&2
         return 1
     fi
 
+    if false; then
+    # Resolve the AWS config file path once so each test does not re-derive it.
     _aws_cfg="${AWS_CONFIG_FILE:-${HOME}/.secrets/aws-config}"
 
-    if [[ -z "${BACKUP_DIR}" ]]; then
-        make_fixture_backups
-        BACKUP_DIR="${_TEST_BACKUP_DIR}"
-    fi
-
-    run_one_sync() {
+    # Run ha-offsite-backups with staging credentials and the given CLI args.
+    # No stubs: the real AWS CLI and real S3 bucket are used.
+    # stderr is merged with stdout so callers capture all log output.
+    run_rotate_aws_backups() {
         local aws_mounts=()
-        [[ -r "${_aws_cfg}" ]] && aws_mounts+=(-v "${_aws_cfg}:/run/secrets/aws-config:ro")
+        [[ -r "${_aws_cfg}" ]] && \
+            aws_mounts+=(-v "${_aws_cfg}:/run/secrets/aws-config:ro")
         # shellcheck disable=SC2086
         docker run --rm ${DOCKER_RUN_ARGS:-} \
-            -e "AWS_S3_BUCKET_NAME=${AWS_S3_BUCKET_NAME}" \
-            -e "BACKUP_DIR=/backups" \
-            -e "DRYRUN=${DRYRUN}" \
-            -v "${BACKUP_DIR}:/backups:ro" \
+            -e "BUCKET=${BUCKET:-}" \
+            -e "BUCKET_LIST=${BUCKET_LIST:-}" \
+            -e "DRYRUN=${DRYRUN:-true}" \
             "${aws_mounts[@]}" \
-            "${IMAGE}" /usr/local/bin/ha-offsite-backups 2>&1
+            "${IMAGE}" "$@" 2>&1
     }
-    export -f run_one_sync
 
+    # Start the full service container (scheduler mode) detached.
+    # Prints the container ID to stdout; caller is responsible for stop and rm.
     run_service_detached() {
         local aws_mounts=()
-        [[ -r "${_aws_cfg}" ]] && aws_mounts+=(-v "${_aws_cfg}:/run/secrets/aws-config:ro")
+        [[ -r "${_aws_cfg}" ]] && \
+            aws_mounts+=(-v "${_aws_cfg}:/run/secrets/aws-config:ro")
         # shellcheck disable=SC2086
         docker run -d ${DOCKER_RUN_ARGS:-} \
-            -e "AWS_S3_BUCKET_NAME=${AWS_S3_BUCKET_NAME}" \
-            -e "BACKUP_DIR=/backups" \
-            -e "DRYRUN=${DRYRUN}" \
-            -e "CRON_EXPRESSION=* * * * *" \
-            -v "${BACKUP_DIR}:/backups:ro" \
+            -e "BUCKET=${BUCKET:-}" \
+            -e "BUCKET_LIST=${BUCKET_LIST:-}" \
+            -e "DRYRUN=${DRYRUN:-true}" \
             "${aws_mounts[@]}" \
+            "$@" \
             "${IMAGE}"
     }
 
-    export BACKUP_DIR
+    # Run an aws CLI command inside the image, bypassing the ha-offsite-backups
+    # entrypoint.  Used for bucket lifecycle operations in test_staging_rotation_e2e.
+    _aws() {
+        local aws_mounts=() aws_env=()
+        if [[ -r "${_aws_cfg}" ]]; then
+            aws_mounts+=(-v "${_aws_cfg}:/run/secrets/aws-config:ro")
+            aws_env+=(-e "AWS_CONFIG_FILE=/run/secrets/aws-config")
+        fi
+        # shellcheck disable=SC2086
+        docker run --rm --entrypoint /usr/bin/aws \
+            ${DOCKER_RUN_ARGS:-} \
+            "${aws_mounts[@]}" \
+            "${aws_env[@]}" \
+            "${IMAGE}" "$@"
+    }
+
     export _aws_cfg
-    export -f run_one_sync run_service_detached
+    export -f _aws run_rotate_aws_backups run_service_detached
+    fi
 
+    # Create a shared image archive for Trivy, Grype, and Dive — avoids mounting
+    # the Docker socket inside scanner containers, which hangs on macOS Docker Desktop.
+    _scan_tar=""
     if [[ "${_SCAN}" == "true" || "${_ADVISE_GRYPE}" == "true" || "${_ADVISE_DIVE}" == "true" ]]; then
-        _SCAN_TAR=$(mktemp /tmp/ha-offsite-backups-staging-scan-XXXXXX)
-        docker save "${IMAGE}" > "${_SCAN_TAR}"
+        _scan_tar=$(mktemp /tmp/staging-scan-XXXXXX)
+        trap 'rm -f "${_scan_tar}"' EXIT
+        docker save "${IMAGE}" > "${_scan_tar}"
+    fi
+    export _scan_tar
+}
+
+# _days_ago_ts prints a timestamp N days ago in rotate-backups' default format
+# (YYYYMMDDThhmmss at noon UTC).  Handles GNU date (Linux) and BSD date (macOS).
+_days_ago_ts() {
+    local n="$1"
+    date -u -d "${n} days ago" '+%Y%m%dT120000' 2>/dev/null || \
+    date -u -v-"${n}"d '+%Y%m%dT120000'
+}
+
+# _skip prints a SKIP notice, increments the shared skip counter, and returns 0
+# so the test is not counted as a failure.
+_SKIP_COUNT=0
+_skip() {
+    echo "SKIP '${FUNCNAME[1]}': $*"
+    (( ++_SKIP_COUNT )) || true
+}
+
+# _aws_available returns 0 when a bucket and at least one form of AWS
+# credentials are present.
+_aws_available() {
+    local bucket="${BUCKET:-${BUCKET_LIST:-}}"
+    [[ -n "${bucket}" ]] && {
+        [[ -r "${_aws_cfg:-/nonexistent}" ]] || \
+        [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]
+    }
+}
+
+# ── AWS-independent tests ─────────────────────────────────────────────────────
+# These exercise CLI option parsing only; no bucket connection is attempted.
+
+test_staging_help() {
+    local output result=0
+    output=$(run_rotate_aws_backups --help 2>&1) || result=$?
+    if [[ ${result} -eq 0 ]] && echo "${output}" | grep -q 'Usage:'; then
+        echo "PASS '${FUNCNAME[0]}': --help exits 0 and prints usage"
+    else
+        echo "FAIL '${FUNCNAME[0]}': --help failed (exit=${result})"
+        return 1
     fi
 }
 
-test_staging_image_has_required_binaries() {
+test_staging_version() {
+    local output result=0
+    output=$(run_rotate_aws_backups --version 2>&1) || result=$?
+    if [[ ${result} -eq 0 ]] && [[ -n "${output}" ]]; then
+        echo "PASS '${FUNCNAME[0]}': --version exits 0 and prints: ${output}"
+    else
+        echo "FAIL '${FUNCNAME[0]}': --version failed (exit=${result})"
+        return 1
+    fi
+}
+
+test_staging_unknown_option() {
     local result=0
-    docker run --rm --entrypoint /bin/sh "${IMAGE}" -c \
-        'command -v aws >/dev/null && test -x /usr/local/bin/ha-offsite-backups && test -x /usr/local/bin/startup && test -x /usr/local/bin/healthcheck' \
-        > /dev/null 2>&1 || result=$?
-    if [[ ${result} -eq 0 ]]; then
-        echo "PASS '${FUNCNAME[0]}': required binaries and scripts exist"
+    run_rotate_aws_backups --no-such-option > /dev/null 2>&1 || result=$?
+    if [[ ${result} -ne 0 ]]; then
+        echo "PASS '${FUNCNAME[0]}': exits non-zero for unknown option"
     else
-        echo "FAIL '${FUNCNAME[0]}': required binaries/scripts missing"
+        echo "FAIL '${FUNCNAME[0]}': should have exited non-zero for unknown option"
         return 1
     fi
 }
 
-test_staging_xform_transform_known_name() {
-    local output result=0
-    output=$(docker run --rm --entrypoint /bin/bash "${IMAGE}" -c \
-        'source /usr/local/bin/ha-offsite-backups; xform-backup-name "Automatic_backup_2025.6.3_2025-07-16_05.34_36783615.tar"' \
-        2>&1) || result=$?
-    if [[ ${result} -eq 0 && "${output}" == "20250716T053436-home-assistant-automatic-backup-2025.6.3.tar" ]]; then
-        echo "PASS '${FUNCNAME[0]}': filename transformation matches expected canonical name"
+test_staging_no_bucket_cli_mode() {
+    # Run with no BUCKET env so the no-bucket error path is genuinely exercised.
+    # Uses plain docker run (not run_rotate_aws_backups) to avoid injecting the
+    # caller's BUCKET from the outer environment.
+    local result=0
+    docker run --rm "${IMAGE}" > /dev/null 2>&1 || result=$?
+    if [[ ${result} -ne 0 ]]; then
+        echo "PASS '${FUNCNAME[0]}': CLI mode without bucket exits non-zero"
     else
-        echo "FAIL '${FUNCNAME[0]}': unexpected transform result '${output}'"
+        echo "FAIL '${FUNCNAME[0]}': should have exited non-zero without bucket"
         return 1
     fi
 }
 
-test_staging_sync_dryrun_once() {
-    _aws_available || { _skip "bucket or AWS credentials unavailable"; return 0; }
+test_staging_cron_no_bucket() {
+    # Scheduler mode must also validate bucket presence before exec'ing crond.
+    # Uses plain docker run for the same reason as test_staging_no_bucket_cli_mode.
+    local result=0
+    docker run --rm "${IMAGE}" --cron > /dev/null 2>&1 || result=$?
+    if [[ ${result} -ne 0 ]]; then
+        echo "PASS '${FUNCNAME[0]}': --cron without bucket exits non-zero"
+    else
+        echo "FAIL '${FUNCNAME[0]}': should have exited non-zero without bucket"
+        return 1
+    fi
+}
+
+# ── AWS-dependent tests ───────────────────────────────────────────────────────
+# Each test skips when BUCKET/BUCKET_LIST or credentials are absent.
+
+# test_staging_cli_dryrun: run one rotation pass (CLI mode) with DRYRUN=true.
+# Verifies the full S3 list → rotate-backups → (dry-run) pipeline end-to-end.
+# No objects are deleted.  Expected duration: 10–60 s depending on bucket size.
+#
+# Root cause of exit=1 when grep finds no matching lines:
+#   The rotate-backups pipeline contains:
+#     ... | grep -E -i '(Deleting|Ignoring|Preserving)' | ...
+#   With 'set -o pipefail', grep exits 1 when no lines match (e.g. an empty
+#   bucket, or a rotate-backups build whose output format has changed).  That
+#   propagates as the container exit code before the "completed" log line is
+#   ever written.  Fixed in src/ha-offsite-backups by wrapping grep in
+#   '{ grep ... || true; }' so a "no matches" result is non-fatal.
+test_staging_cli_dryrun() {
+    _aws_available || { _skip "BUCKET or credentials not configured"; return 0; }
+
+    printf '  starting CLI dry-run rotation (DRYRUN=%s)...\n' \
+        "${DRYRUN:-true}" >&2
 
     local output result=0
-    output=$(run_one_sync 2>&1) || result=$?
+    output=$(run_rotate_aws_backups 2>&1) || result=$?
+
     if [[ ${result} -ne 0 ]]; then
         echo "FAIL '${FUNCNAME[0]}': ha-offsite-backups exited non-zero (${result})"
+        printf '  -- full output --\n' >&2
         printf '%s\n' "${output}" >&2
+        printf '  -- end output --\n' >&2
         return 1
     fi
-
-    if echo "${output}" | grep -q "completed aws s3 sync" && \
-       echo "${output}" | grep -q "20250716T053436-home-assistant-automatic-backup-2025.6.3.tar"; then
-        echo "PASS '${FUNCNAME[0]}': one-shot sync completed and canonicalized filenames logged"
+    if echo "${output}" | grep -q 'completed.*bucket rotation'; then
+        echo "PASS '${FUNCNAME[0]}': CLI rotation completed (DRYRUN=${DRYRUN:-true})"
     else
-        echo "FAIL '${FUNCNAME[0]}': expected completion/canonical logs not found"
+        echo "FAIL '${FUNCNAME[0]}': 'completed.*bucket rotation' not found in output"
+        printf '  -- full output --\n' >&2
         printf '%s\n' "${output}" >&2
+        printf '  -- end output --\n' >&2
         return 1
     fi
 }
 
+# test_staging_cron_fires: start the full scheduler container and wait for the
+# cron daemon to trigger a complete rotation cycle.
+# Expected duration: up to 4 m (≤60 s to first cron tick + rotation run time).
 test_staging_cron_fires() {
-    _aws_available || { _skip "bucket or AWS credentials unavailable"; return 0; }
+    _aws_available || { _skip "BUCKET or credentials not configured"; return 0; }
 
-    local cid
-    cid=$(run_service_detached)
+    # Schedule every minute so the first fire is at most 60 s away.
+    local container_id
+    container_id=$(run_service_detached -e "CRON_EXPRESSION=* * * * *")
+    printf '  container %s started; waiting for first cron rotation (up to 2m)...\n' \
+        "${container_id:0:12}" >&2
 
-    local elapsed=0 timeout=130 interval=10 found=false
+    local elapsed=0 timeout=120 interval=10 found=false last_log
     while [[ ${elapsed} -lt ${timeout} ]]; do
         sleep "${interval}"
         elapsed=$(( elapsed + interval ))
-        if docker logs "${cid}" 2>&1 | grep -q "finish sync '/backups' to S3 bucket"; then
+        if docker logs "${container_id}" 2>&1 | grep -q 'completed.*bucket rotation'; then
             found=true
             break
         fi
+        last_log=$(docker logs --tail 1 "${container_id}" 2>&1)
+        printf '  [%ds] waiting... (last: %s)\n' "${elapsed}" "${last_log}" >&2
     done
 
-    docker stop "${cid}" > /dev/null 2>&1 || true
-    docker rm "${cid}" > /dev/null 2>&1 || true
+    docker stop "${container_id}" > /dev/null 2>&1
+    docker rm   "${container_id}" > /dev/null 2>&1
 
     if "${found}"; then
-        echo "PASS '${FUNCNAME[0]}': cron-driven sync completed within ${elapsed}s"
+        echo "PASS '${FUNCNAME[0]}': cron rotation completed within ${elapsed}s (DRYRUN=${DRYRUN:-true})"
     else
-        echo "FAIL '${FUNCNAME[0]}': cron-driven sync did not complete within ${timeout}s"
+        echo "FAIL '${FUNCNAME[0]}': rotation did not complete within ${timeout}s"
         return 1
     fi
 }
 
+# test_staging_rotation_e2e: the only test that validates rotation correctness.
+#
+# Creates a disposable bucket named test.staging.backups.ha-offsite-backups-<epoch>, populates
+# it with 20 synthetic objects — two files per backup event (a .tar.gz and a
+# .tar.sha1) — to verify that grouped backup sets are deleted and preserved as
+# atomic units.
+#
+# Object layout (10 backup events × 2 files each = 20 objects total):
+#   - 3 recent events: days 1, 2, 3 ago   (inside the 7-day daily window)
+#   - 7 old events:    days 60–66 ago      (outside all retention windows)
+#
+# Retention policy applied: DAILY=7, all other periods=0.
+# Expected outcome: exactly 6 objects remain (3 events × 2 files each);
+#   all 14 old objects are deleted in matched pairs.
+#
+# The bucket is always removed in a RETURN trap, even on failure.
+# This test always runs DRYRUN=false on its own transient bucket; the caller's
+# DRYRUN env var does not apply here.
+#
+# Required IAM permissions (beyond production): s3:CreateBucket, s3:PutObject,
+# s3:DeleteBucket on arn:aws:s3:::test.staging.backups.ha-offsite-backups-*
+test_staging_rotation_e2e() {
+    _aws_available || { _skip "BUCKET or credentials not configured"; return 0; }
+
+    local epoch test_bucket aws_mounts
+    epoch=$(date +%s)
+    test_bucket="test.staging.backups.ha-offsite-backups-${epoch}"
+    aws_mounts=()
+    [[ -r "${_aws_cfg}" ]] && \
+        aws_mounts+=(-v "${_aws_cfg}:/run/secrets/aws-config:ro")
+
+    # Always remove the transient bucket on exit — expand test_bucket now so
+    # the variable is captured in the trap string rather than re-evaluated.
+    # shellcheck disable=SC2064
+    trap "_aws s3 rb 's3://${test_bucket}' --force > /dev/null 2>&1 || true" RETURN
+
+    # ── Create bucket ─────────────────────────────────────────────────────────
+    printf '  creating transient test bucket s3://%s...\n' "${test_bucket}" >&2
+    _aws s3 mb "s3://${test_bucket}" > /dev/null 2>&1 || {
+        echo "FAIL '${FUNCNAME[0]}': could not create bucket" \
+             "(check s3:CreateBucket on test.staging.backups.ha-offsite-backups-*)"
+        return 1
+    }
+
+    # ── Populate ──────────────────────────────────────────────────────────────
+    # Two files per backup event (.tar.gz + .tar.sha1) exercise the grouped
+    # backup-set behaviour: rotation must delete or preserve both files of each
+    # event together, never orphaning one.
+    #
+    # 3 recent events (days 1–3 ago) fall inside rotate-backups' 7-day daily
+    # window.  7 old events (days 60–66 ago) are well outside all retention
+    # windows when WEEKLY=0, MONTHLY=0, YEARLY=0.
+    # Timestamps at noon UTC avoid DST edge cases near midnight.
+    printf '  uploading 20 synthetic backup objects (2 per event)...\n' >&2
+    local i ts ext
+    for i in 1 2 3 60 61 62 63 64 65 66; do
+        ts=$(_days_ago_ts "${i}")
+        for ext in tar.gz tar.sha1; do
+            _aws s3api put-object \
+                --bucket "${test_bucket}" \
+                --key "backup-${ts}.${ext}" \
+                > /dev/null 2>&1 || {
+                echo "FAIL '${FUNCNAME[0]}': could not upload backup-${ts}.${ext}"
+                return 1
+            }
+        done
+    done
+
+    # ── Rotate ────────────────────────────────────────────────────────────────
+    # Retention is set via env vars (not CLI flags) so CRON_MODE is not
+    # triggered.  Only daily retention is active; everything else is 0.
+    # DRYRUN=false is unconditional here — the point of this test is live deletion.
+    printf '  running live rotation (DAILY=7, no other retention)...\n' >&2
+    local rot_output rot_result=0
+    # shellcheck disable=SC2086
+    rot_output=$(docker run --rm ${DOCKER_RUN_ARGS:-} \
+        -e "BUCKET=${test_bucket}" \
+        -e "DRYRUN=false" \
+        -e "HOURLY=0" \
+        -e "DAILY=7" \
+        -e "WEEKLY=0" \
+        -e "MONTHLY=0" \
+        -e "YEARLY=0" \
+        -e "DELETE_IGNORED=false" \
+        "${aws_mounts[@]}" \
+        "${IMAGE}" 2>&1) || rot_result=$?
+
+    if [[ ${rot_result} -ne 0 ]]; then
+        echo "FAIL '${FUNCNAME[0]}': rotation exited non-zero (${rot_result})"
+        printf '%s\n' "${rot_output}" | tail -10 >&2
+        return 1
+    fi
+
+    # ── Verify ────────────────────────────────────────────────────────────────
+    # The 3 recent events (6 objects) must remain; all 7 old events (14 objects)
+    # must be gone.  A count of anything other than 6 indicates either a missed
+    # deletion or a split backup set (one file deleted without its partner).
+    local remaining=0
+    remaining=$(_aws s3 ls "s3://${test_bucket}/" 2>/dev/null | wc -l | tr -d ' ')
+
+    if [[ "${remaining}" -eq 6 ]]; then
+        echo "PASS '${FUNCNAME[0]}': ${remaining}/20 objects remain" \
+             "(14 old objects correctly deleted in matched pairs)"
+    else
+        echo "FAIL '${FUNCNAME[0]}': ${remaining}/20 objects remain (expected 6)"
+        printf 'Remaining objects:\n' >&2
+        _aws s3 ls "s3://${test_bucket}/" >&2 2>&1 || true
+        printf 'Rotation output (last 10 lines):\n' >&2
+        printf '%s\n' "${rot_output}" | tail -10 >&2
+        return 1
+    fi
+}
+
+# ── Scan / advise tests ───────────────────────────────────────────────────────
+# These inspect the image for known vulnerabilities.  Both are AWS-independent
+# and require only Docker and network access to pull the scanner images.
+
+# test_staging_trivy_scan: Trivy HIGH/CRITICAL image scan.
+# Mirrors build Stage 4.  Gating: fails when unfixed HIGH/CRITICAL CVEs are
+# found.  Skip with --no-scan for fast iteration during development.
 test_staging_trivy_scan() {
     [[ "${_SCAN}" == "true" ]] || {
         _skip "--no-scan: Trivy scan skipped"
         return 0
     }
+    printf '  running Trivy scan on %s...\n' "${IMAGE}" >&2
 
     local result=0
     docker run --rm \
-        -v "${_SCAN_TAR}:/scan.tar:ro" \
+        -v "${_scan_tar}:/scan.tar:ro" \
         -v "${TRIVY_CACHE_VOLUME}:/root/.cache/trivy" \
         "${TRIVY_IMAGE}:${TRIVY_TAG}" image \
             --quiet \
@@ -274,68 +545,88 @@ test_staging_trivy_scan() {
             --ignore-unfixed \
             --severity HIGH,CRITICAL \
             --timeout 5m \
-            --input /scan.tar > /dev/null 2>&1 || result=$?
-
+            --input /scan.tar 2>&1 || result=$?
     if [[ ${result} -eq 0 ]]; then
         echo "PASS '${FUNCNAME[0]}': no unfixed HIGH/CRITICAL CVEs found"
     else
-        echo "FAIL '${FUNCNAME[0]}': unfixed HIGH/CRITICAL CVEs found (exit=${result})"
+        echo "FAIL '${FUNCNAME[0]}': unfixed HIGH/CRITICAL CVEs found" \
+             "(exit=${result})"
         return 1
     fi
 }
 
+# test_staging_grype_advise: Grype full-severity advisory scan.
+# Mirrors build Stage 5a.  Non-gating: findings are printed but never cause a
+# test failure.  Skipped when --no-advise is set, or when --no-scan is given
+# without an explicit --advise.
 test_staging_grype_advise() {
     [[ "${_ADVISE_GRYPE}" == "true" ]] || {
-        _skip "--no-advise grype: advisory scan skipped"
+        _skip "--no-advise grype: Grype advisory scan skipped"
         return 0
     }
 
+    printf '  running Grype advisory scan on %s...\n' "${IMAGE}" >&2
     docker run --rm \
-        -v "${_SCAN_TAR}:/scan.tar:ro" \
+        -v "${_scan_tar}:/scan.tar:ro" \
         -v "${GRYPE_CACHE_VOLUME}:/root/.cache/grype" \
-        "${GRYPE_IMAGE}:${GRYPE_TAG}" docker-archive:/scan.tar > /dev/null 2>&1 || true
+        "${GRYPE_IMAGE}:${GRYPE_TAG}" \
+            docker-archive:/scan.tar 2>&1 || true
     echo "PASS '${FUNCNAME[0]}': Grype advisory scan complete (advisory only)"
 }
 
+# test_staging_scout_advise: Docker Scout CVE advisory scan.
+# Mirrors build Stage 5b.  Non-gating.
 test_staging_scout_advise() {
     [[ "${_ADVISE_SCOUT}" == "true" ]] || {
-        _skip "--no-advise scout: advisory scan skipped"
+        _skip "--no-advise scout: Docker Scout advisory scan skipped"
         return 0
     }
-
-    docker scout cves "${IMAGE}" > /dev/null 2>&1 || true
+    printf '  running Docker Scout advisory scan on %s...\n' "${IMAGE}" >&2
+    docker scout cves "${IMAGE}" 2>&1 || true
     echo "PASS '${FUNCNAME[0]}': Docker Scout advisory scan complete (advisory only)"
 }
 
+# test_staging_dive_advise: Dive image layer analysis.
+# Mirrors build Stage 5c.  Non-gating.
 test_staging_dive_advise() {
     [[ "${_ADVISE_DIVE}" == "true" ]] || {
-        _skip "--no-advise dive: advisory scan skipped"
+        _skip "--no-advise dive: Dive layer analysis skipped"
         return 0
     }
-
+    printf '  running Dive layer analysis on %s...\n' "${IMAGE}" >&2
     docker run --rm \
-        -v "${_SCAN_TAR}:/scan.tar:ro" \
+        -v "${_scan_tar}:/scan.tar:ro" \
         "${DIVE_IMAGE}:${DIVE_TAG}" \
             --source docker-archive \
             --ci \
-            /scan.tar > /dev/null 2>&1 || true
-    echo "PASS '${FUNCNAME[0]}': Dive advisory analysis complete (advisory only)"
+            /scan.tar 2>&1 || true
+    echo "PASS '${FUNCNAME[0]}': Dive layer analysis complete (advisory only)"
 }
+
+# ---------------------------------------------------------------------------
+# Test runner
+# ---------------------------------------------------------------------------
 
 run_tests() {
     local all_tests=(
-        test_staging_image_has_required_binaries
-        test_staging_xform_transform_known_name
-        test_staging_sync_dryrun_once
+        test_staging_help
+        test_staging_version
+        test_staging_unknown_option
+        test_staging_no_bucket_cli_mode
+        test_staging_cron_no_bucket
+        test_staging_cli_dryrun
         test_staging_cron_fires
+        test_staging_rotation_e2e
         test_staging_trivy_scan
         test_staging_grype_advise
         test_staging_scout_advise
         test_staging_dive_advise
     )
 
+    # Apply --test and --skip-e2e filters.
     local tests=()
     if [[ -n "${_ONLY_TEST}" ]]; then
+        # Validate the requested test name before committing.
         local valid=false
         local t
         for t in "${all_tests[@]}"; do
@@ -349,25 +640,32 @@ run_tests() {
         fi
         tests=("${_ONLY_TEST}")
     else
-        tests=("${all_tests[@]}")
+        for t in "${all_tests[@]}"; do
+            [[ "${t}" == "test_staging_rotation_e2e" \
+                && "${_SKIP_E2E}" == "true" ]] && continue
+            tests+=("${t}")
+        done
     fi
 
-    setup || { echo "ERROR: setup failed"; return 1; }
+    setup || { echo "ERROR: Setup failed"; return 1; }
 
-    echo "Running staging tests for ha-offsite-backups"
+    echo "Running staging tests for ha-offsite-backups..."
     echo "================================================="
     echo "Image:  ${IMAGE}"
-    echo "Bucket: ${AWS_S3_BUCKET_NAME:-<not set>}"
-    echo "DRYRUN: ${DRYRUN}"
-    echo "Backup: ${BACKUP_DIR}"
-    echo "Scan:   ${_SCAN}"
+    if _aws_available; then
+        echo "Bucket: ${BUCKET:-${BUCKET_LIST:-}}"
+        echo "DRYRUN: ${DRYRUN:-true}"
+    else
+        echo "AWS:    not configured — AWS-dependent tests will be skipped"
+    fi
+    [[ -n "${_ONLY_TEST}" ]]  && echo "Filter: --test ${_ONLY_TEST}"
+    "${_SKIP_E2E}"            && echo "Filter: --skip-e2e"
+    echo "Scan:   ${_SCAN} (Trivy HIGH/CRITICAL)"
     echo "Advise: grype=${_ADVISE_GRYPE} scout=${_ADVISE_SCOUT} dive=${_ADVISE_DIVE}"
-    [[ -n "${_ONLY_TEST}" ]] && echo "Filter: --test ${_ONLY_TEST}"
     echo "================================================="
 
     _SKIP_COUNT=0
     local passed=0 failed=0
-    local t
     for t in "${tests[@]}"; do
         if "${t}"; then
             (( ++passed )) || true
@@ -375,33 +673,36 @@ run_tests() {
             (( ++failed )) || true
         fi
     done
-
+    # Subtract skips from passed: skipped tests exit 0 but are not passes.
     passed=$(( passed - _SKIP_COUNT ))
-    local total=${#tests[@]}
-    echo "================================================="
-    echo "Results: ${passed} passed, ${failed} failed, ${_SKIP_COUNT} skipped (${total} run)"
 
+    local total=$(( ${#tests[@]} ))
+    echo "================================================="
+    echo "Results: ${passed} passed, ${failed} failed," \
+         "${_SKIP_COUNT} skipped (${total} run)"
     return "${failed}"
 }
 
-cleanup() {
-    [[ -n "${_SCAN_TAR}" ]] && rm -f "${_SCAN_TAR}" || true
-    [[ -n "${_TEST_BACKUP_DIR}" ]] && rm -rf "${_TEST_BACKUP_DIR}" || true
-}
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 main() {
+    # ── Option parsing ────────────────────────────────────────────────────────
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --image)            IMAGE="$2"; shift ;;
-            --bucket)           AWS_S3_BUCKET_NAME="$2"; shift ;;
-            --backup-dir)       BACKUP_DIR="$2"; shift ;;
-            --aws-config)       AWS_CONFIG_FILE="$2"; shift ;;
-            --dryrun)           DRYRUN=true ;;
-            --no-dryrun)        DRYRUN=false ;;
-            --scan)             _SCAN=true ;;
-            --no-scan)          _SCAN=false ;;
+            --image)        IMAGE="$2";            shift ;;
+            --bucket)       BUCKET="$2";           shift ;;
+            --bucket-list)  BUCKET_LIST="$2";      shift ;;
+            --aws-config)   AWS_CONFIG_FILE="$2";  shift ;;
+            --dryrun)       DRYRUN=true  ;;
+            --no-dryrun)    DRYRUN=false ;;
+            --scan)         _SCAN=true   ;;
+            --no-scan)      _SCAN=false  ;;
             --advise)
                 _ADVISE_EXPLICIT=true
+                # Accept an optional advisement list only when the next arg
+                # looks like one (grype/scout/dive only — not an image name).
                 if [[ $# -gt 1 && "$2" =~ ^(grype|scout|dive|all)(,(grype|scout|dive|all))*$ ]]; then
                     advisements="$2"; shift
                 else
@@ -410,14 +711,14 @@ main() {
                 _ADVISE_GRYPE=false
                 _ADVISE_SCOUT=false
                 _ADVISE_DIVE=false
-                IFS=',' read -ra adv_list <<< "${advisements}"
+                IFS=',' read -ra adv_list <<< "$advisements"
                 for adv in "${adv_list[@]}"; do
-                    case "${adv}" in
-                        grype) _ADVISE_GRYPE=true ;;
-                        scout) _ADVISE_SCOUT=true ;;
-                        dive)  _ADVISE_DIVE=true ;;
-                        all)   _ADVISE_GRYPE=true; _ADVISE_SCOUT=true; _ADVISE_DIVE=true ;;
-                        *)     echo "Unknown advisement: ${adv}" >&2; exit 1 ;;
+                    case "$adv" in
+                        grype)  _ADVISE_GRYPE=true ;;
+                        scout)  _ADVISE_SCOUT=true ;;
+                        dive)   _ADVISE_DIVE=true ;;
+                        all)    _ADVISE_GRYPE=true; _ADVISE_SCOUT=true; _ADVISE_DIVE=true ;;
+                        *)      echo "Unknown advisement: $adv" >&2; exit 1 ;;
                     esac
                 done
                 ;;
@@ -427,14 +728,16 @@ main() {
                 _ADVISE_DIVE=false
                 _ADVISE_EXPLICIT=true
                 ;;
-            --yes)              _YES=true ;;
-            --test)             _ONLY_TEST="$2"; shift ;;
-            -h|--help)          show_help; exit 0 ;;
+            --yes)          _YES=true    ;;
+            --skip-e2e)     _SKIP_E2E=true ;;
+            --test)         _ONLY_TEST="$2"; shift ;;
+            -h|--help)      show_help; exit 0 ;;
             -*)
                 echo "Unknown option: $1" >&2
-                echo "Run 'test/staging --help' for usage" >&2
+                echo "Run 'test/staging --help' for usage." >&2
                 exit 1 ;;
             *)
+                # First non-option positional arg is the image.
                 if [[ -z "${IMAGE}" ]]; then
                     IMAGE="$1"
                 else
@@ -445,64 +748,121 @@ main() {
         shift
     done
 
+    # --no-scan implies --no-advise unless --advise was given explicitly.
     if [[ "${_SCAN}" == "false" && "${_ADVISE_EXPLICIT}" == "false" ]]; then
         _ADVISE_GRYPE=false
         _ADVISE_SCOUT=false
         _ADVISE_DIVE=false
     fi
 
-    local bucket="${AWS_S3_BUCKET_NAME:-}"
-    local aws_cfg="${AWS_CONFIG_FILE:-${HOME}/.secrets/aws-config}"
-    local will_touch_aws=false
-    [[ -n "${bucket}" ]] && { [[ -r "${aws_cfg}" ]] || [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; } && will_touch_aws=true
+    # Propagate resolved values so setup() and test functions see them.
+    export IMAGE BUCKET BUCKET_LIST AWS_CONFIG_FILE DRYRUN
+    export _YES _SKIP_E2E _ONLY_TEST _SCAN _ADVISE_GRYPE _ADVISE_SCOUT _ADVISE_DIVE
 
+    # Derive BUCKET_LIST from BUCKET when not set explicitly.
+    [[ -z "${BUCKET_LIST}" && -n "${BUCKET}" ]] && BUCKET_LIST="${BUCKET}"
+
+    # ── Preflight summary ────────────────────────────────────────────────────
+    local aws_cfg="${AWS_CONFIG_FILE:-${HOME}/.secrets/aws-config}"
+    local bucket="${BUCKET:-${BUCKET_LIST:-}}"
+
+    local will_touch_aws=false
+    [[ -n "${bucket}" ]] && \
+        { [[ -r "${aws_cfg}" ]] || [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; } && \
+        will_touch_aws=true
+
+    echo "================================================================"
+    echo " WARNING: test/staging exercises live infrastructure"
+    echo "================================================================"
+    echo ""
+    echo "  Image:    ${IMAGE:-<not set>}"
+    if [[ "${_SCAN}" == "true" ]]; then
+        echo "  Scan:     Trivy HIGH/CRITICAL (--no-scan to skip)"
+    else
+        echo "  Scan:     skipped (--no-scan)"
+    fi
+    local _advise_any=false
+    [[ "${_ADVISE_GRYPE}" == "true" || "${_ADVISE_SCOUT}" == "true" \
+        || "${_ADVISE_DIVE}" == "true" ]] && _advise_any=true
+    if "${_advise_any}"; then
+        local _advise_list=()
+        [[ "${_ADVISE_GRYPE}" == "true" ]] && _advise_list+=(grype)
+        [[ "${_ADVISE_SCOUT}" == "true" ]] && _advise_list+=(scout)
+        [[ "${_ADVISE_DIVE}"  == "true" ]] && _advise_list+=(dive)
+        local IFS=,
+        echo "  Advise:   ${_advise_list[*]} (--no-advise to skip)"
+    elif [[ "${_SCAN}" == "false" && "${_ADVISE_EXPLICIT}" == "false" ]]; then
+        echo "  Advise:   skipped (implied by --no-scan; use --advise to enable)"
+    else
+        echo "  Advise:   skipped (--no-advise)"
+    fi
+    echo ""
+
+    # ── Bucket safety check ───────────────────────────────────────────────────
+    # For buckets that do not look like test or staging, force DRYRUN=true to
+    # prevent accidental production object deletions.  --no-dryrun overrides.
     local caution_bucket=false
-    if [[ -n "${bucket}" ]] && [[ "${bucket}" != test.* ]] && [[ "${bucket}" != staging.* ]]; then
+    if [[ -n "${bucket}" ]] && \
+       [[ "${bucket}" != test.* ]] && \
+       [[ "${bucket}" != staging.* ]]; then
         caution_bucket=true
         if [[ "${DRYRUN}" != "false" ]]; then
             DRYRUN=true
-        fi
-    fi
-
-    echo "================================================================"
-    echo " WARNING: test/staging may touch live AWS infrastructure"
-    echo "================================================================"
-    echo "Image:   ${IMAGE:-<not set>}"
-    echo "Bucket:  ${bucket:-<not set>}"
-    echo "DRYRUN:  ${DRYRUN}"
-    echo "Scan:    ${_SCAN}"
-    echo "Advise:  grype=${_ADVISE_GRYPE} scout=${_ADVISE_SCOUT} dive=${_ADVISE_DIVE}"
-
-    if "${caution_bucket}"; then
-        echo ""
-        echo "CAUTION: bucket does not start with test. or staging."
-        if [[ "${DRYRUN}" == "true" ]]; then
-            echo "DRYRUN forced to true. Use --no-dryrun only when intentional."
-        else
-            echo "--no-dryrun selected. Real S3 writes may occur."
+            export DRYRUN
         fi
     fi
 
     if "${will_touch_aws}"; then
+        echo "  Bucket:   s3://${bucket}"
+        if [[ "${DRYRUN}" == "true" ]]; then
+            echo "  Dry-run:  true — no objects will be deleted from this bucket"
+        else
+            echo "  Dry-run:  false — OBJECTS MAY BE DELETED FROM THIS BUCKET"
+        fi
         echo ""
-        echo "Production-equivalent integration tests will run against s3://${bucket}"
+        echo "  E2E test: will CREATE and DELETE a transient bucket:"
+        echo "            s3://test.staging.backups.ha-offsite-backups-<epoch>"
+        echo "            10 synthetic objects are uploaded, rotated live"
+        echo "            (DRYRUN=false), then the bucket is deleted."
+        echo "            Requires s3:CreateBucket + s3:PutObject +"
+        echo "            s3:DeleteBucket on test.staging.backups.ha-offsite-backups-*"
+    else
+        echo "  AWS:      not configured — AWS-dependent tests will be skipped"
+    fi
+    echo ""
+
+    if "${caution_bucket}"; then
+        echo "  !! CAUTION !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+        echo "  !! BUCKET='${bucket}'"
+        echo "  !! does not start with 'test.' or 'staging.'."
+        if [[ "${DRYRUN}" == "true" ]]; then
+            echo "  !! DRYRUN forced to 'true'."
+            echo "  !! Pass --no-dryrun to allow real object deletions."
+        else
+            echo "  !! --no-dryrun: objects MAY be deleted from S3."
+        fi
+        echo "  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+        echo ""
+    fi
+
+    # ── Confirmation ──────────────────────────────────────────────────────────
+    # Prompt only when real AWS will be touched; --yes skips for scripted use.
+    if "${will_touch_aws}"; then
         if "${_YES}"; then
-            echo "--yes set: confirmation skipped"
+            echo "  (--yes: skipping confirmation prompt)"
+            echo ""
         else
             printf 'Type "yes" to proceed, or press Enter to abort: '
             local response
             read -r response
+            echo ""
             if [[ "${response}" != "yes" ]]; then
-                echo "Aborted"
-                exit 1
+                echo "Aborted."
+                return 1
             fi
         fi
-    else
-        echo ""
-        echo "AWS not fully configured; AWS-dependent tests will be skipped"
     fi
 
-    trap cleanup EXIT
     run_tests
 }
 
