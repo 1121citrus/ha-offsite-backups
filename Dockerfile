@@ -32,6 +32,7 @@ LABEL org.opencontainers.image.title="ha-offsite-backups" \
       org.opencontainers.image.revision="${GIT_COMMIT}" \
       org.opencontainers.image.created="${BUILD_DATE}"
 
+COPY requirements.txt /tmp/
 RUN apk add --no-cache --no-interactive --upgrade \
         aws-cli=2.27.25-r0 \
         bash=5.2.37-r0 \
@@ -42,9 +43,8 @@ RUN apk add --no-cache --no-interactive --upgrade \
         py3-urllib3=1.26.20-r1 \
         tzdata=2026a-r0 \
     && pip3 install --no-cache-dir --break-system-packages \
-        cryptography==46.0.5 \
-        urllib3==2.6.3 \
-        zipp==3.23.0 \
+        -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt \
     && apk del py3-pip \
     && mkdir -p /usr/local/include /usr/local/bin
 

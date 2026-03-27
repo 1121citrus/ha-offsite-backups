@@ -23,3 +23,16 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
+
+  # ── Python pip ───────────────────────────────────────────────────────────────
+  # Keeps requirements.txt dependencies up to date.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    labels:
+      - "dependencies"
+      - "python"
