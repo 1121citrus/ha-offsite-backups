@@ -27,6 +27,24 @@ function ha-offsite-backups() {
     set -o errexit -o errtrace -o nounset -o pipefail
     is-true "${DEBUG:-false}" && set -o xtrace -o verbose
 
+    # Parse CLI arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dryrun)
+                DRYRUN=true
+                shift
+                ;;
+            --no-dryrun)
+                DRYRUN=false
+                shift
+                ;;
+            *)
+                error "Unknown option: $1"
+                return 1
+                ;;
+        esac
+    done
+
     export AWS_CONFIG_FILE="${AWS_CONFIG_FILE:-/run/secrets/aws-config}"
     export AWS_S3_BUCKET_NAME=${AWS_S3_BUCKET_NAME:?Need bucket}
     export BACKUP_DIR=${BACKUP_DIR:=/backups}
@@ -105,6 +123,7 @@ function xform-backup-name() {
     fi
 }
 
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    # shellcheck disable=SC2128
+    if [ "${BASH_SOURCE}" = "${0}" ]; then
     ha-offsite-backups "$@"
 fi

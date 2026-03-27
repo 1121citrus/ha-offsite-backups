@@ -1,0 +1,509 @@
+#!/usr/bin/env bash
+
+# test/staging - final integration tests for ha-offsite-backups on staging.
+#
+# Copyright (C) 2025 James Hanlon [mailto:jim@hanlonsoftware.com]
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# These tests execute the built image end-to-end with no stubs.
+# Tests that require a live S3 bucket are skipped (not failed) when
+# AWS_S3_BUCKET_NAME is unset or AWS credentials are unavailable.
+#
+# SYNOPSIS
+#   test/staging [options] [IMAGE]
+#
+# OPTIONS
+#   IMAGE                     Docker image to test (positional; also --image)
+#   --image IMAGE             Docker image to test (env: IMAGE)
+#   --bucket BUCKET           S3 bucket name (env: AWS_S3_BUCKET_NAME)
+#   --backup-dir DIR          Host directory with HA backup files
+#                             (env: BACKUP_DIR; default: auto-generated fixture)
+#   --aws-config FILE         AWS config file path
+#                             (env: AWS_CONFIG_FILE; default: ~/.secrets/aws-config)
+#   --dryrun                  Enable dry-run for sync tests (default)
+#   --no-dryrun               Disable dry-run (real S3 writes)
+#   --scan                    Run Trivy HIGH/CRITICAL scan (default)
+#   --no-scan                 Skip Trivy scan; also implies --no-advise unless
+#                             --advise is provided explicitly
+#   --advise [ADVISEMENTS]    Advisory scans: grype,scout,dive,all
+#                             (default if given without list: grype,scout)
+#   --no-advise               Disable all advisory scans
+#   --yes                     Skip the "yes" confirmation prompt
+#   --test TEST               Run only one named test function
+#   -h, --help                Print this help and exit
+#
+# ENVIRONMENT
+#   IMAGE                     Docker image to test
+#   AWS_S3_BUCKET_NAME        S3 bucket used by integration tests
+#   BACKUP_DIR                Host directory with backup files to mount read-only
+#   AWS_CONFIG_FILE           Path to AWS config file
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+#                             Inline AWS credentials (alternative to AWS_CONFIG_FILE)
+#   DRYRUN                    true/false for integration tests (default: true)
+#   STAGING_SCAN              true/false controls Trivy scan (default: true)
+#   STAGING_ADVISE            true/false controls Grype advisory scan (default: true)
+#   DOCKER_RUN_ARGS           Extra args appended to each docker run
+#
+# EXAMPLES
+#   # Image-only tests plus scans (no AWS required):
+#   test/staging 1121citrus/ha-offsite-backups:latest
+#
+#   # Full staging integration run against real bucket in dry-run mode:
+#   test/staging --bucket test.staging.ha-offsite-backups \
+#       --aws-config ~/.secrets/aws-config \
+#       1121citrus/ha-offsite-backups:latest
+#
+#   # Fast iteration:
+#   test/staging --no-scan --no-advise 1121citrus/ha-offsite-backups:latest
+
+set -euo pipefail
+
+IMAGE="${IMAGE:-}"
+AWS_S3_BUCKET_NAME="${AWS_S3_BUCKET_NAME:-}"
+BACKUP_DIR="${BACKUP_DIR:-}"
+AWS_CONFIG_FILE="${AWS_CONFIG_FILE:-}"
+DRYRUN="${DRYRUN:-true}"
+_SCAN="${STAGING_SCAN:-true}"
+_ADVISE_GRYPE="${STAGING_ADVISE:-true}"
+_ADVISE_SCOUT=true
+_ADVISE_DIVE=false
+_ADVISE_EXPLICIT=false
+_ONLY_TEST=""
+_YES=false
+
+TRIVY_IMAGE=aquasec/trivy
+TRIVY_TAG=0.62.1
+GRYPE_IMAGE=anchore/grype
+GRYPE_TAG=v0.87.0
+DIVE_IMAGE=wagoodman/dive
+DIVE_TAG=v0.13.1
+
+TRIVY_CACHE_VOLUME=ha-offsite-backups-staging-trivy-cache
+GRYPE_CACHE_VOLUME=ha-offsite-backups-staging-grype-cache
+
+_SKIP_COUNT=0
+_TEST_BACKUP_DIR=""
+_SCAN_TAR=""
+
+show_help() {
+    sed -n '/^# SYNOPSIS/,/^set -/p' "$0" \
+        | grep '^#' \
+        | sed 's/^# \{0,1\}//'
+}
+
+_skip() {
+    echo "SKIP '${FUNCNAME[1]}': $*"
+    (( ++_SKIP_COUNT )) || true
+}
+
+_aws_available() {
+    [[ -n "${AWS_S3_BUCKET_NAME:-}" ]] && {
+        [[ -r "${_aws_cfg:-/nonexistent}" ]] || [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]
+    }
+}
+
+make_fixture_backups() {
+    local dir
+    dir=$(mktemp -d)
+    cat > "${dir}/Automatic_backup_2025.6.3_2025-07-16_05.34_36783615.tar" <<'EOF'
+fixture-one
+EOF
+    cat > "${dir}/Automatic_backup_2025.6.3_2025-07-15_09.10_35433883.tar" <<'EOF'
+fixture-two
+EOF
+    _TEST_BACKUP_DIR="${dir}"
+}
+
+setup() {
+    [[ -n "${IMAGE}" ]] || {
+        echo "ERROR: IMAGE is not set" >&2
+        echo "       Pass positional IMAGE or --image IMAGE" >&2
+        return 1
+    }
+    docker image inspect "${IMAGE}" > /dev/null 2>&1 || {
+        echo "ERROR: image not found locally: ${IMAGE}" >&2
+        echo "       Pull or build it first: ./build --no-scan" >&2
+        return 1
+    }
+
+    if ! docker run --rm --entrypoint test "${IMAGE}" \
+        -x /usr/local/bin/ha-offsite-backups > /dev/null 2>&1; then
+        echo "ERROR: /usr/local/bin/ha-offsite-backups missing in ${IMAGE}" >&2
+        return 1
+    fi
+
+    if ! docker run --rm --entrypoint test "${IMAGE}" \
+        -x /usr/local/bin/startup > /dev/null 2>&1; then
+        echo "ERROR: /usr/local/bin/startup missing in ${IMAGE}" >&2
+        return 1
+    fi
+
+    _aws_cfg="${AWS_CONFIG_FILE:-${HOME}/.secrets/aws-config}"
+
+    if [[ -z "${BACKUP_DIR}" ]]; then
+        make_fixture_backups
+        BACKUP_DIR="${_TEST_BACKUP_DIR}"
+    fi
+
+    run_one_sync() {
+        local aws_mounts=()
+        [[ -r "${_aws_cfg}" ]] && aws_mounts+=(-v "${_aws_cfg}:/run/secrets/aws-config:ro")
+        # shellcheck disable=SC2086
+        docker run --rm ${DOCKER_RUN_ARGS:-} \
+            -e "AWS_S3_BUCKET_NAME=${AWS_S3_BUCKET_NAME}" \
+            -e "BACKUP_DIR=/backups" \
+            -e "DRYRUN=${DRYRUN}" \
+            -v "${BACKUP_DIR}:/backups:ro" \
+            "${aws_mounts[@]}" \
+            "${IMAGE}" /usr/local/bin/ha-offsite-backups 2>&1
+    }
+    export -f run_one_sync
+
+    run_service_detached() {
+        local aws_mounts=()
+        [[ -r "${_aws_cfg}" ]] && aws_mounts+=(-v "${_aws_cfg}:/run/secrets/aws-config:ro")
+        # shellcheck disable=SC2086
+        docker run -d ${DOCKER_RUN_ARGS:-} \
+            -e "AWS_S3_BUCKET_NAME=${AWS_S3_BUCKET_NAME}" \
+            -e "BACKUP_DIR=/backups" \
+            -e "DRYRUN=${DRYRUN}" \
+            -e "CRON_EXPRESSION=* * * * *" \
+            -v "${BACKUP_DIR}:/backups:ro" \
+            "${aws_mounts[@]}" \
+            "${IMAGE}"
+    }
+
+    export BACKUP_DIR
+    export _aws_cfg
+    export -f run_one_sync run_service_detached
+
+    if [[ "${_SCAN}" == "true" || "${_ADVISE_GRYPE}" == "true" || "${_ADVISE_DIVE}" == "true" ]]; then
+        _SCAN_TAR=$(mktemp /tmp/ha-offsite-backups-staging-scan-XXXXXX)
+        docker save "${IMAGE}" > "${_SCAN_TAR}"
+    fi
+}
+
+test_staging_image_has_required_binaries() {
+    local result=0
+    docker run --rm --entrypoint /bin/sh "${IMAGE}" -c \
+        'command -v aws >/dev/null && test -x /usr/local/bin/ha-offsite-backups && test -x /usr/local/bin/startup && test -x /usr/local/bin/healthcheck' \
+        > /dev/null 2>&1 || result=$?
+    if [[ ${result} -eq 0 ]]; then
+        echo "PASS '${FUNCNAME[0]}': required binaries and scripts exist"
+    else
+        echo "FAIL '${FUNCNAME[0]}': required binaries/scripts missing"
+        return 1
+    fi
+}
+
+test_staging_xform_transform_known_name() {
+    local output result=0
+    output=$(docker run --rm --entrypoint /bin/bash "${IMAGE}" -c \
+        'source /usr/local/bin/ha-offsite-backups; xform-backup-name "Automatic_backup_2025.6.3_2025-07-16_05.34_36783615.tar"' \
+        2>&1) || result=$?
+    if [[ ${result} -eq 0 && "${output}" == "20250716T053436-home-assistant-automatic-backup-2025.6.3.tar" ]]; then
+        echo "PASS '${FUNCNAME[0]}': filename transformation matches expected canonical name"
+    else
+        echo "FAIL '${FUNCNAME[0]}': unexpected transform result '${output}'"
+        return 1
+    fi
+}
+
+test_staging_sync_dryrun_once() {
+    _aws_available || { _skip "bucket or AWS credentials unavailable"; return 0; }
+
+    local output result=0
+    output=$(run_one_sync 2>&1) || result=$?
+    if [[ ${result} -ne 0 ]]; then
+        echo "FAIL '${FUNCNAME[0]}': ha-offsite-backups exited non-zero (${result})"
+        printf '%s\n' "${output}" >&2
+        return 1
+    fi
+
+    if echo "${output}" | grep -q "completed aws s3 sync" && \
+       echo "${output}" | grep -q "20250716T053436-home-assistant-automatic-backup-2025.6.3.tar"; then
+        echo "PASS '${FUNCNAME[0]}': one-shot sync completed and canonicalized filenames logged"
+    else
+        echo "FAIL '${FUNCNAME[0]}': expected completion/canonical logs not found"
+        printf '%s\n' "${output}" >&2
+        return 1
+    fi
+}
+
+test_staging_cron_fires() {
+    _aws_available || { _skip "bucket or AWS credentials unavailable"; return 0; }
+
+    local cid
+    cid=$(run_service_detached)
+
+    local elapsed=0 timeout=130 interval=10 found=false
+    while [[ ${elapsed} -lt ${timeout} ]]; do
+        sleep "${interval}"
+        elapsed=$(( elapsed + interval ))
+        if docker logs "${cid}" 2>&1 | grep -q "finish sync '/backups' to S3 bucket"; then
+            found=true
+            break
+        fi
+    done
+
+    docker stop "${cid}" > /dev/null 2>&1 || true
+    docker rm "${cid}" > /dev/null 2>&1 || true
+
+    if "${found}"; then
+        echo "PASS '${FUNCNAME[0]}': cron-driven sync completed within ${elapsed}s"
+    else
+        echo "FAIL '${FUNCNAME[0]}': cron-driven sync did not complete within ${timeout}s"
+        return 1
+    fi
+}
+
+test_staging_trivy_scan() {
+    [[ "${_SCAN}" == "true" ]] || {
+        _skip "--no-scan: Trivy scan skipped"
+        return 0
+    }
+
+    local result=0
+    docker run --rm \
+        -v "${_SCAN_TAR}:/scan.tar:ro" \
+        -v "${TRIVY_CACHE_VOLUME}:/root/.cache/trivy" \
+        "${TRIVY_IMAGE}:${TRIVY_TAG}" image \
+            --quiet \
+            --no-progress \
+            --exit-code 1 \
+            --ignore-unfixed \
+            --severity HIGH,CRITICAL \
+            --timeout 5m \
+            --input /scan.tar > /dev/null 2>&1 || result=$?
+
+    if [[ ${result} -eq 0 ]]; then
+        echo "PASS '${FUNCNAME[0]}': no unfixed HIGH/CRITICAL CVEs found"
+    else
+        echo "FAIL '${FUNCNAME[0]}': unfixed HIGH/CRITICAL CVEs found (exit=${result})"
+        return 1
+    fi
+}
+
+test_staging_grype_advise() {
+    [[ "${_ADVISE_GRYPE}" == "true" ]] || {
+        _skip "--no-advise grype: advisory scan skipped"
+        return 0
+    }
+
+    docker run --rm \
+        -v "${_SCAN_TAR}:/scan.tar:ro" \
+        -v "${GRYPE_CACHE_VOLUME}:/root/.cache/grype" \
+        "${GRYPE_IMAGE}:${GRYPE_TAG}" docker-archive:/scan.tar > /dev/null 2>&1 || true
+    echo "PASS '${FUNCNAME[0]}': Grype advisory scan complete (advisory only)"
+}
+
+test_staging_scout_advise() {
+    [[ "${_ADVISE_SCOUT}" == "true" ]] || {
+        _skip "--no-advise scout: advisory scan skipped"
+        return 0
+    }
+
+    docker scout cves "${IMAGE}" > /dev/null 2>&1 || true
+    echo "PASS '${FUNCNAME[0]}': Docker Scout advisory scan complete (advisory only)"
+}
+
+test_staging_dive_advise() {
+    [[ "${_ADVISE_DIVE}" == "true" ]] || {
+        _skip "--no-advise dive: advisory scan skipped"
+        return 0
+    }
+
+    docker run --rm \
+        -v "${_SCAN_TAR}:/scan.tar:ro" \
+        "${DIVE_IMAGE}:${DIVE_TAG}" \
+            --source docker-archive \
+            --ci \
+            /scan.tar > /dev/null 2>&1 || true
+    echo "PASS '${FUNCNAME[0]}': Dive advisory analysis complete (advisory only)"
+}
+
+run_tests() {
+    local all_tests=(
+        test_staging_image_has_required_binaries
+        test_staging_xform_transform_known_name
+        test_staging_sync_dryrun_once
+        test_staging_cron_fires
+        test_staging_trivy_scan
+        test_staging_grype_advise
+        test_staging_scout_advise
+        test_staging_dive_advise
+    )
+
+    local tests=()
+    if [[ -n "${_ONLY_TEST}" ]]; then
+        local valid=false
+        local t
+        for t in "${all_tests[@]}"; do
+            [[ "${t}" == "${_ONLY_TEST}" ]] && valid=true && break
+        done
+        if ! "${valid}"; then
+            echo "ERROR: unknown test '${_ONLY_TEST}'" >&2
+            printf '       Available tests:\n' >&2
+            printf '         %s\n' "${all_tests[@]}" >&2
+            return 1
+        fi
+        tests=("${_ONLY_TEST}")
+    else
+        tests=("${all_tests[@]}")
+    fi
+
+    setup || { echo "ERROR: setup failed"; return 1; }
+
+    echo "Running staging tests for ha-offsite-backups"
+    echo "================================================="
+    echo "Image:  ${IMAGE}"
+    echo "Bucket: ${AWS_S3_BUCKET_NAME:-<not set>}"
+    echo "DRYRUN: ${DRYRUN}"
+    echo "Backup: ${BACKUP_DIR}"
+    echo "Scan:   ${_SCAN}"
+    echo "Advise: grype=${_ADVISE_GRYPE} scout=${_ADVISE_SCOUT} dive=${_ADVISE_DIVE}"
+    [[ -n "${_ONLY_TEST}" ]] && echo "Filter: --test ${_ONLY_TEST}"
+    echo "================================================="
+
+    _SKIP_COUNT=0
+    local passed=0 failed=0
+    local t
+    for t in "${tests[@]}"; do
+        if "${t}"; then
+            (( ++passed )) || true
+        else
+            (( ++failed )) || true
+        fi
+    done
+
+    passed=$(( passed - _SKIP_COUNT ))
+    local total=${#tests[@]}
+    echo "================================================="
+    echo "Results: ${passed} passed, ${failed} failed, ${_SKIP_COUNT} skipped (${total} run)"
+
+    return "${failed}"
+}
+
+cleanup() {
+    [[ -n "${_SCAN_TAR}" ]] && rm -f "${_SCAN_TAR}" || true
+    [[ -n "${_TEST_BACKUP_DIR}" ]] && rm -rf "${_TEST_BACKUP_DIR}" || true
+}
+
+main() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --image)            IMAGE="$2"; shift ;;
+            --bucket)           AWS_S3_BUCKET_NAME="$2"; shift ;;
+            --backup-dir)       BACKUP_DIR="$2"; shift ;;
+            --aws-config)       AWS_CONFIG_FILE="$2"; shift ;;
+            --dryrun)           DRYRUN=true ;;
+            --no-dryrun)        DRYRUN=false ;;
+            --scan)             _SCAN=true ;;
+            --no-scan)          _SCAN=false ;;
+            --advise)
+                _ADVISE_EXPLICIT=true
+                if [[ $# -gt 1 && "$2" =~ ^(grype|scout|dive|all)(,(grype|scout|dive|all))*$ ]]; then
+                    advisements="$2"; shift
+                else
+                    advisements="grype,scout"
+                fi
+                _ADVISE_GRYPE=false
+                _ADVISE_SCOUT=false
+                _ADVISE_DIVE=false
+                IFS=',' read -ra adv_list <<< "${advisements}"
+                for adv in "${adv_list[@]}"; do
+                    case "${adv}" in
+                        grype) _ADVISE_GRYPE=true ;;
+                        scout) _ADVISE_SCOUT=true ;;
+                        dive)  _ADVISE_DIVE=true ;;
+                        all)   _ADVISE_GRYPE=true; _ADVISE_SCOUT=true; _ADVISE_DIVE=true ;;
+                        *)     echo "Unknown advisement: ${adv}" >&2; exit 1 ;;
+                    esac
+                done
+                ;;
+            --no-advise)
+                _ADVISE_GRYPE=false
+                _ADVISE_SCOUT=false
+                _ADVISE_DIVE=false
+                _ADVISE_EXPLICIT=true
+                ;;
+            --yes)              _YES=true ;;
+            --test)             _ONLY_TEST="$2"; shift ;;
+            -h|--help)          show_help; exit 0 ;;
+            -*)
+                echo "Unknown option: $1" >&2
+                echo "Run 'test/staging --help' for usage" >&2
+                exit 1 ;;
+            *)
+                if [[ -z "${IMAGE}" ]]; then
+                    IMAGE="$1"
+                else
+                    echo "Unexpected argument: $1" >&2
+                    exit 1
+                fi ;;
+        esac
+        shift
+    done
+
+    if [[ "${_SCAN}" == "false" && "${_ADVISE_EXPLICIT}" == "false" ]]; then
+        _ADVISE_GRYPE=false
+        _ADVISE_SCOUT=false
+        _ADVISE_DIVE=false
+    fi
+
+    local bucket="${AWS_S3_BUCKET_NAME:-}"
+    local aws_cfg="${AWS_CONFIG_FILE:-${HOME}/.secrets/aws-config}"
+    local will_touch_aws=false
+    [[ -n "${bucket}" ]] && { [[ -r "${aws_cfg}" ]] || [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; } && will_touch_aws=true
+
+    local caution_bucket=false
+    if [[ -n "${bucket}" ]] && [[ "${bucket}" != test.* ]] && [[ "${bucket}" != staging.* ]]; then
+        caution_bucket=true
+        if [[ "${DRYRUN}" != "false" ]]; then
+            DRYRUN=true
+        fi
+    fi
+
+    echo "================================================================"
+    echo " WARNING: test/staging may touch live AWS infrastructure"
+    echo "================================================================"
+    echo "Image:   ${IMAGE:-<not set>}"
+    echo "Bucket:  ${bucket:-<not set>}"
+    echo "DRYRUN:  ${DRYRUN}"
+    echo "Scan:    ${_SCAN}"
+    echo "Advise:  grype=${_ADVISE_GRYPE} scout=${_ADVISE_SCOUT} dive=${_ADVISE_DIVE}"
+
+    if "${caution_bucket}"; then
+        echo ""
+        echo "CAUTION: bucket does not start with test. or staging."
+        if [[ "${DRYRUN}" == "true" ]]; then
+            echo "DRYRUN forced to true. Use --no-dryrun only when intentional."
+        else
+            echo "--no-dryrun selected. Real S3 writes may occur."
+        fi
+    fi
+
+    if "${will_touch_aws}"; then
+        echo ""
+        echo "Production-equivalent integration tests will run against s3://${bucket}"
+        if "${_YES}"; then
+            echo "--yes set: confirmation skipped"
+        else
+            printf 'Type "yes" to proceed, or press Enter to abort: '
+            local response
+            read -r response
+            if [[ "${response}" != "yes" ]]; then
+                echo "Aborted"
+                exit 1
+            fi
+        fi
+    else
+        echo ""
+        echo "AWS not fully configured; AWS-dependent tests will be skipped"
+    fi
+
+    trap cleanup EXIT
+    run_tests
+}
+
+[[ "${BASH_SOURCE[0]}" == "$0" ]] && main "$@"

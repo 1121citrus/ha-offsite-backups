@@ -8,7 +8,8 @@
 # SYNOPSIS
 #   build [--push] [--version VERSION] [--platform PLATFORMS]
 #         [--registry REGISTRY] [--no-sbom] [--no-provenance]
-#         [--no-lint] [--no-test] [--no-smoke] [--no-scan]
+#         [--no-lint] [--no-test] [--no-smoke]
+#         [--smoke-test-bucket BUCKET] [--no-scan]
 #         [--advise [ADVISEMENTS]] [--advice [ADVISEMENTS]] [--no-advise]
 #         [--cache CACHE_RULES]
 #         [--dry-run] [--help]
@@ -30,6 +31,9 @@
 #   --no-lint           Skip hadolint Dockerfile check and shellcheck.
 #   --no-test           Skip running the bats test suite.
 #   --no-smoke          Skip the built-image smoke test stage.
+#   --smoke-test-bucket BUCKET
+#                       Bucket name used only by Stage 3b smoke tests.
+#                       Default: test.staging.ha-offsite-backups.smoke-test
 #   --no-scan           Skip the Trivy vulnerability scan (gating).
 #                       Also skips advisements (stage 5) by default; pass --advise
 #                       after --no-scan to keep the advisory scans.
@@ -56,6 +60,7 @@
 #   are themselves overridden by the matching CLI flag:
 #     BUILD_VERSION, BUILD_PUSH, BUILD_PLATFORM, BUILD_REGISTRY
 #     BUILD_LINT, BUILD_TEST, BUILD_SMOKE, BUILD_SCAN, BUILD_ADVISE
+#     SMOKE_TEST_BUCKET
 #
 # PREREQUISITES
 #   • docker with the buildx plugin (≥ 0.10)
@@ -103,6 +108,7 @@ PROVENANCE=true
 LINT=${BUILD_LINT:-true}
 TEST=${BUILD_TEST:-true}
 SMOKE=${BUILD_SMOKE:-true}
+SMOKE_TEST_BUCKET=${SMOKE_TEST_BUCKET:-test.staging.ha-offsite-backups.smoke-test}
 SCAN=${BUILD_SCAN:-true}
 ADVISE_GRYPE=false
 ADVISE_SCOUT=false
@@ -144,11 +150,13 @@ set_cache_targets() {
 
     for target in "${_cache_targets[@]}"; do
         case "${target}" in
-            trivy)
+            all)
                 if [[ "${mode}" == "reset" ]]; then
                     CACHE_RESET_TRIVY=true
+                    CACHE_RESET_GRYPE=true
                 elif [[ "${mode}" == "skip-update" ]]; then
                     CACHE_SKIP_UPDATE_TRIVY=true
+                    CACHE_SKIP_UPDATE_GRYPE=true
                 fi
                 ;;
             grype)
@@ -158,13 +166,11 @@ set_cache_targets() {
                     CACHE_SKIP_UPDATE_GRYPE=true
                 fi
                 ;;
-            all)
+            trivy)
                 if [[ "${mode}" == "reset" ]]; then
                     CACHE_RESET_TRIVY=true
-                    CACHE_RESET_GRYPE=true
                 elif [[ "${mode}" == "skip-update" ]]; then
                     CACHE_SKIP_UPDATE_TRIVY=true
-                    CACHE_SKIP_UPDATE_GRYPE=true
                 fi
                 ;;
             *)
@@ -225,16 +231,6 @@ reset_cache_db() {
 # ---------------------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --push)             PUSH=true ;;
-        --version)          VERSION="$2"; shift ;;
-        --platform)         PLATFORMS="$2"; shift ;;
-        --registry)         REGISTRY="$2"; shift ;;
-        --no-sbom)          SBOM=false ;;
-        --no-provenance)    PROVENANCE=false ;;
-        --no-lint)          LINT=false ;;
-        --no-test)          TEST=false ;;
-        --no-smoke)         SMOKE=false ;;
-        --no-scan)          SCAN=false ;;
         --advise|--advice)
             _ADVISE_EXPLICIT=true
             if [[ $# -gt 1 && ! "$2" =~ ^-- ]]; then
@@ -259,12 +255,6 @@ while [[ $# -gt 0 ]]; do
                 esac
             done
             ;;
-        --no-advise)
-            ADVISE_GRYPE=false
-            ADVISE_SCOUT=false
-            ADVISE_DIVE=false
-            _ADVISE_EXPLICIT=true
-            ;;
         --cache)
             if [[ $# -lt 2 || "$2" =~ ^-- ]]; then
                 echo "--cache requires CACHE_RULES" >&2
@@ -277,6 +267,23 @@ while [[ $# -gt 0 ]]; do
         --help|-h)
             sed -n '3,/^# EXAMPLES/p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'
             exit 0 ;;
+        --no-advise)
+            ADVISE_GRYPE=false
+            ADVISE_SCOUT=false
+            ADVISE_DIVE=false
+            _ADVISE_EXPLICIT=true
+            ;;
+        --no-lint)          LINT=false ;;
+        --no-provenance)    PROVENANCE=false ;;
+        --no-sbom)          SBOM=false ;;
+        --no-smoke)         SMOKE=false ;;
+        --no-scan)          SCAN=false ;;
+        --no-test)          TEST=false ;;
+        --platform)         PLATFORMS="$2"; shift ;;
+        --push)             PUSH=true ;;
+        --registry)         REGISTRY="$2"; shift ;;
+        --smoke-test-bucket) SMOKE_TEST_BUCKET="$2"; shift ;;
+        --version)          VERSION="$2"; shift ;;
         *)
             echo "Unknown option: $1" >&2
             exit 1 ;;
@@ -448,19 +455,26 @@ fi
 # ---------------------------------------------------------------------------
 # Stage 3b: Smoke
 # ---------------------------------------------------------------------------
-# Runs one built-image smoke test for parity with CI.  This catches packaging
-# and runtime wiring issues that source-mounted bats tests cannot detect.
+# Runs one built-image smoke test for parity with CI.
+#
+# Why this stage exists:
+# - Source-mounted bats tests validate shell logic, not image packaging.
+# - Stage 3b validates startup wiring in the built image artifact itself.
+#
+# What this stage checks:
+# - Container starts with realistic env vars.
+# - Container is still running after a short warm-up delay.
 if [[ "${SMOKE}" == "true" ]]; then
     echo "==> Stage 3b: Smoke ${full_image}:${VERSION}" >&2
 
     if [[ "${DRY_RUN}" == "true" ]]; then
-        echo "[DRY RUN] cid=\$(docker run -d --rm -e AWS_S3_BUCKET_NAME=test.staging.smoke-test -e CRON_EXPRESSION='@daily' '${full_image}:${VERSION}')" >&2
+        echo "[DRY RUN] cid=\$(docker run -d --rm -e AWS_S3_BUCKET_NAME='${SMOKE_TEST_BUCKET}' -e CRON_EXPRESSION='@daily' '${full_image}:${VERSION}')" >&2
         echo "[DRY RUN] sleep 3" >&2
         echo "[DRY RUN] docker ps --filter 'id=\${cid}' --filter 'status=running' --quiet | grep -q ." >&2
         echo "[DRY RUN] docker rm -f \"\${cid}\" >/dev/null 2>&1 || true" >&2
     else
         cid=$(docker run -d --rm \
-            -e AWS_S3_BUCKET_NAME=test.staging.smoke-test \
+            -e AWS_S3_BUCKET_NAME="${SMOKE_TEST_BUCKET}" \
             -e CRON_EXPRESSION='@daily' \
             "${full_image}:${VERSION}")
 

@@ -4,11 +4,12 @@ setup() {
     BUILD_SCRIPT="${BATS_TEST_DIRNAME}/../build"
 }
 
-@test "build --help documents advice and cache" {
+@test "build --help documents advice, cache, and smoke bucket" {
     run "${BUILD_SCRIPT}" --help
     [ "$status" -eq 0 ]
     [[ "$output" == *"--advice"* ]]
     [[ "$output" == *"--cache CACHE_RULES"* ]]
+    [[ "$output" == *"--smoke-test-bucket BUCKET"* ]]
 }
 
 @test "build --advice scout enables Scout advisement" {
@@ -110,6 +111,18 @@ setup() {
 
 @test "build --no-smoke skips Stage 3b smoke" {
     run "${BUILD_SCRIPT}" --dry-run --no-lint --no-test --no-smoke --no-scan --no-advise
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"Stage 3b: Smoke"* ]]
+}
+
+@test "build --smoke-test-bucket sets smoke bucket" {
+    run "${BUILD_SCRIPT}" --dry-run --no-lint --no-test --no-scan --no-advise --smoke-test-bucket custom.stage.bucket
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"AWS_S3_BUCKET_NAME='custom.stage.bucket'"* ]]
+}
+
+@test "build honors BUILD_SMOKE=false" {
+    run env BUILD_SMOKE=false "${BUILD_SCRIPT}" --dry-run --no-lint --no-test --no-scan --no-advise
     [ "$status" -eq 0 ]
     [[ "$output" != *"Stage 3b: Smoke"* ]]
 }

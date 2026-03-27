@@ -93,13 +93,28 @@ Variable | Default | Notes
 
 ## Testing
 
-Run the test suite (requires Docker):
+Run the automated bats suite (requires Docker):
 
 ```bash
 test/run-all
 ```
 
-Tests use [Bats](https://github.com/bats-core/bats-core) via the `bats/bats:latest` Docker image. The suite includes unit tests for filename transformation and integration tests with a mocked `aws` CLI.
+Run final production-equivalent staging integration tests against a built image:
+
+```bash
+test/staging 1121citrus/ha-offsite-backups:dev-<sha>
+```
+
+For staging runs that exercise AWS connectivity and scheduler behavior:
+
+```bash
+test/staging --bucket test.staging.ha-offsite-backups \
+    --aws-config ~/.secrets/aws-config \
+    1121citrus/ha-offsite-backups:dev-<sha>
+```
+
+Automated bats tests cover shell logic and mocked AWS paths. `test/staging`
+validates the built image end-to-end in a production-equivalent staging setup.
 
 ## Building
 
