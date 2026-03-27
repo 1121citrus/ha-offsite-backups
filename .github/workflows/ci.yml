@@ -46,10 +46,10 @@ jobs:
         # Use -i (not -it) since there is no TTY in CI.
         run: docker run -i --rm -v "$PWD:/code" -w /code bats/bats:1.13.0 test
 
-  # ── Stage 3b: Image smoke test ──────────────────────────────────────────────
-  # Quick sanity checks against the built image to catch packaging regressions
-  # not visible in source-mounted bats tests.
-  smoke:
+  # ── Stage 3b: Image smoke test ─────────────────────────────────────────────
+  # Run one built-image smoke test to catch packaging/runtime regressions not
+  # visible in source-mounted bats tests.
+  smoke-test:
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -58,10 +58,9 @@ jobs:
         with:
           name: docker-image
           path: /tmp
-
       - name: Load image
         run: gunzip -c /tmp/image.tar.gz | docker load
-
+ 
       - name: Verify bash is available
         run: docker run --rm --entrypoint bash "$IMAGE:latest" --version
 
@@ -80,6 +79,19 @@ jobs:
       - name: Verify healthcheck is executable
         run: docker run --rm --entrypoint test "$IMAGE:latest" -x /usr/local/bin/healthcheck
 
+      - name: Run image smoke test
+        run: |
+          cid=$(docker run -d --rm \
+            -e AWS_S3_BUCKET_NAME=smoke-bucket \
+            -e CRON_EXPRESSION='@daily' \
+            "$IMAGE:latest")
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          sleep 3
+          docker ps \
+            --filter "id=$cid" \
+            --filter "status=running" \
+            --quiet | grep -q .
+
   # ── Stage 4: Security scan ─────────────────────────────────────────────────
   scan:
     needs: build
@@ -89,7 +101,7 @@ jobs:
 
   # ── Stage 5: Push to Docker Hub ────────────────────────────────────────────
   push:
-    needs: [test, smoke, scan]
+    needs: [scan, smoke-test, test]
     if: >
       github.event_name == 'push' && (
         startsWith(github.ref, 'refs/tags/v') ||
