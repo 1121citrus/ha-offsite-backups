@@ -7,7 +7,7 @@ The image is built with defence-in-depth from the ground up:
 | Control | Implementation |
 | --- | --- |
 | Non-root execution | Dedicated `ha-offsite-backups` user, UID 10001, shell `/sbin/nologin` |
-| Minimal base image | `alpine:3.21` — no package manager beyond apk, minimal utilities |
+| Minimal base image | `alpine:3.22` — no package manager beyond apk, minimal utilities |
 | Supply-chain pinning | All dependencies pinned to specific versions; digest pinning for Alpine base |
 | OS patch hygiene | Python and Alpine versions are pinned; images include the latest available patches for pinned versions |
 | Read-only filesystem | Configuration read from mounted secrets; use `--read-only --tmpfs /tmp` for runtime |

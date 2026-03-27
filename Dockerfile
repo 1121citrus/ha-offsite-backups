@@ -48,8 +48,18 @@ RUN apk add --no-cache --no-interactive --upgrade \
     && apk del py3-pip \
     && mkdir -p /usr/local/include /usr/local/bin
 
+# Create a non-privileged user and pre-create the crontabs directory so the
+# service user can write its own crontab without root access.
+ARG UID=10001
+RUN adduser \
+        --disabled-password --gecos "" --shell "/sbin/nologin" \
+        --uid "${UID}" ha-offsite-backups \
+    && install -d -m 0755 -o ha-offsite-backups /var/spool/cron/crontabs
+
 COPY --chmod=644 ./src/include/common-functions /usr/local/include/
 COPY --chmod=755 ./src/ha-offsite-backups ./src/healthcheck ./src/startup /usr/local/bin/
+
+USER ha-offsite-backups
 
 HEALTHCHECK --interval=60s --timeout=5s --retries=3 CMD ["/usr/local/bin/healthcheck"]
 
