@@ -52,18 +52,18 @@ This service will sync HA automatic backup files from the `home_assistant_backup
 Typical log output:
 
 ```
-20250712T125716 startup [INFO] create env file /root/.env
-20250712T125716 startup [INFO] mode of '/root/.env' changed to 0600 (rw-------)
-20250712T125716 startup [INFO] export AWS_CONFIG_FILE='/run/secrets/aws-config'
-20250712T125716 startup [INFO] export AWS_S3_BUCKET_NAME='backup-bucket'
-20250712T125716 startup [INFO] export BACKUP_DIR='/backups'
-20250712T125716 startup [INFO] export CRON_EXPRESSION='*/1 * * * *'
-20250712T125716 startup [INFO] export DEBUG='false'
-20250712T125716 startup [INFO] export DRYRUN='false'
-20250712T125716 startup [INFO] installing cron.d entry: /usr/local/bin/ha-offsite-backups
-20250712T125717 startup [INFO] mode of '/var/spool/cron/crontabs/root' changed to 0644 (rw-r--r--)
-20250712T125717 startup [INFO] crontab: */1 * * * * /usr/local/bin/ha-offsite-backups 2>&1
-20250712T125717 startup [INFO] handing the reins over to cron daemon
+20250712T125716 ha-offsite-backups [INFO] entering scheduler mode (*/1 * * * *)
+20250712T125716 ha-offsite-backups [INFO] wrote env file /root/.env
+20250712T125716 ha-offsite-backups [INFO] export AWS_CONFIG_FILE='/run/secrets/aws-config'
+20250712T125716 ha-offsite-backups [INFO] export AWS_EXTRA_ARGS=''
+20250712T125716 ha-offsite-backups [INFO] export BACKUP_DIR='/backups'
+20250712T125716 ha-offsite-backups [INFO] export BUCKET='backup-bucket'
+20250712T125716 ha-offsite-backups [INFO] export DEBUG='false'
+20250712T125716 ha-offsite-backups [INFO] export DRYRUN='false'
+20250712T125716 ha-offsite-backups [INFO] unset CRON_EXPRESSION
+20250712T125716 ha-offsite-backups [INFO] installing cron entry: */1 * * * * /usr/local/bin/ha-offsite-backups
+20250712T125717 ha-offsite-backups [INFO] crontab: */1 * * * * /usr/local/bin/ha-offsite-backups
+20250712T125717 ha-offsite-backups [INFO] handing off to supercronic
     .
     .
     .

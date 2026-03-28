@@ -7,25 +7,28 @@ Scripts and libraries installed into the container image.
 | Path | Installed to | Role |
 | --- | --- | --- |
 | `ha-offsite-backups` | `/usr/local/bin/ha-offsite-backups` | Primary sync script — renames HA backups to ISO datetime form and syncs to S3 |
-| `startup` | `/usr/local/bin/startup` | Container entrypoint — writes `.env`, installs crontab, execs `crond` |
+| `startup` | `/usr/local/bin/startup` | Compatibility shim — execs `ha-offsite-backups --cron` for legacy deployments |
 | `healthcheck` | `/usr/local/bin/healthcheck` | Docker `HEALTHCHECK` — verifies `crond` is running and the crontab is configured |
 | `include/common-functions` | `/usr/local/include/common-functions` | Shared utility functions sourced by all scripts |
 
 ## `ha-offsite-backups`
 
-Watches the Home Assistant backup directory, transforms filenames from HA's
-default naming scheme (`YYYY_MM_DD.tar`) to ISO datetime form
-(`YYYY-MM-DDTHH-MM-SS.tar`), then syncs the renamed files to an S3 bucket.
+Scans the Home Assistant backup directory for files matching
+`Automatic_backup_<release>_YYYY-MM-DD_HH.MM_nanoseconds.tar`, transforms
+each filename to compact ISO datetime form
+(`YYYYMMDDTHHmmSS-home-assistant-automatic-backup-<release>.tar`), and syncs
+the renamed files to an S3 bucket.
 
 ### Key environment variables
 
 | Variable | Purpose |
 | --- | --- |
-| `HA_BACKUP_DIR` | Path to the HA backup directory (bind-mounted from the host) |
-| `AWS_CONFIG_FILE` | AWS credentials file (typically a Docker secret at `/run/secrets/aws-config`) |
-| `AWS_S3_BUCKET` | Destination S3 bucket |
-| `SYNC_DELETE` | If `true`, delete S3 objects that no longer exist locally |
-| `DEBUG` | Enable `set -x` trace logging |
+| `BACKUP_DIR` | Path to the HA backup directory (default: `/backups`) |
+| `AWS_CONFIG_FILE` | AWS credentials file (default: `/run/secrets/aws-config`) |
+| `AWS_S3_BUCKET_NAME` | Destination S3 bucket (also accepts `HA_OFFSITE_BACKUPS_AWS_S3_BUCKET_NAME`) |
+| `CRON_EXPRESSION` | Schedule for scheduler mode (default: `@daily`) |
+| `DRYRUN` | Dry-run mode — no uploads (default: `true`) |
+| `DEBUG` | Enable `set -x` trace logging (default: `false`) |
 
 ### Filename transformation
 
@@ -34,7 +37,7 @@ lexicographic sorting ambiguous when multiple backups exist for the same day.
 The script transforms these to an ISO 8601 datetime filename using the file's
 modification timestamp, so backups sort chronologically and unambiguously.
 
-The transformation logic is tested independently in `test/test_xform.bats`.
+The transformation logic is tested in `test/02-ha-offsite-backups.bats`.
 
 ### AWS credentials
 
@@ -45,17 +48,20 @@ container.
 
 ## `startup`
 
-Container entrypoint.  Writes runtime configuration to `~/.env`, installs the
-crontab, and execs `crond -l 2 -f` in the foreground.  The `.env` pattern
-ensures `crond`-launched jobs inherit the full runtime configuration without
-relying on `crond`'s own environment variable handling.
+Compatibility shim retained for deployments that set
+`entrypoint: /usr/local/bin/startup`.  Execs
+`ha-offsite-backups --cron "$@"` and inherits its exit status.  New
+deployments should invoke `ha-offsite-backups --cron` directly.
 
 ## `healthcheck`
 
-Checks two conditions:
+Checks three conditions:
 
-1. `crond` is running (`pidof` / `pgrep` with portability fallback)
-2. The crontab contains an `ha-offsite-backups` entry
+1. The crontab at `/var/spool/cron/crontabs/ha-offsite-backups` contains an
+   `ha-offsite-backups` entry
+2. `supercronic` is running (`pgrep -x supercronic`)
+3. The success marker file (`/tmp/.ha-offsite-backups-success`) was updated
+   within the last hour, confirming that the most recent cron job completed
 
 ## `include/common-functions`
 

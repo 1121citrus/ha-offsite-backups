@@ -31,7 +31,7 @@ Or manually:
 
 ```bash
 docker buildx build -t ha-offsite-backups:test .
-bash test/run-all TAG=test
+test/run-all
 ```
 
 ### Code Style
@@ -39,7 +39,7 @@ bash test/run-all TAG=test
 All shell scripts must pass:
 
 ```bash
-shellcheck src/*.sh test/*.sh
+shellcheck src/ha-offsite-backups src/startup src/healthcheck
 hadolint Dockerfile
 ```
 
@@ -61,7 +61,3 @@ Releases are tagged with semantic versions:
 ```
 
 Tags trigger a multi-platform build and push to Docker Hub, plus SLSA provenance and SBOM generation.
-
----
-
-**Code of Conduct:** Please see [CODE\_OF\_CONDUCT.md](CODE_OF_CONDUCT.md)
