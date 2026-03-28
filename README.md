@@ -88,7 +88,7 @@ Variable | Default | Notes
 `BACKUP_DIR` | `/backups` | Where to look for the HA backup files.
 `CRON_EXPRESSION` | `@daily` | Busybox `crond` expression for when the backup should run. Use e.g. `0 4 * * *` to back up at 4 AM every night. See [crontab.guru](https://crontab.guru/) for more. Note: busybox `crond` syntax differs slightly from Vixie cron.
 `DEBUG` | `false` | Set to `true` to enable `xtrace` and `verbose` shell options.
-`DRYRUN` | `false` | Set to `true` to pass `--dryrun` to AWS CLI commands.
+`DRYRUN` | `true` | Set to `false` to enable live uploads to S3.
 `TZ` | `UTC` | Which timezone should `cron` use, e.g. `America/New_York` or `Europe/Warsaw`. See [full list of available time zones](http://manpages.ubuntu.com/manpages/bionic/man3/DateTime::TimeZone::Catalog.3pm.html).
 
 ## Testing

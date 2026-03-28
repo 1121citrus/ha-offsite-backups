@@ -1,6 +1,6 @@
 # Security override packages.
-# These install newer versions than bundled by Alpine's aws-cli apk package.
+# Minimum constraints: raise the floor here when CVE fixes are released.
 # Dependabot tracks this file and opens version-bump PRs automatically.
-cryptography == 46.0.5
-urllib3 == 2.6.3
-zipp == 3.23.0
+cryptography >= 46.0.5
+urllib3 >= 2.6.3
+zipp >= 3.23.0

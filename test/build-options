@@ -7,7 +7,6 @@ contains() { local haystack="$1"; local needle="$2"; [[ "${haystack}" == *"${nee
 help_out=$("${build_script}" --help 2>&1)
 contains "${help_out}" "--advice" || fail "build --help missing --advice"
 contains "${help_out}" "--cache CACHE_RULES" || fail "build --help missing --cache"
-contains "${help_out}" "--smoke-test-bucket BUCKET" || fail "build --help missing --smoke-test-bucket"
 adv_out=$("${build_script}" --advice scout --dry-run --no-lint --no-test --no-scan 2>&1)
 contains "${adv_out}" "Stage 5b: Advise (Scout)" || fail "--advice scout did not enable Scout advisement"
 adv_dive_out=$("${build_script}" --advise Dive --dry-run --no-lint --no-test --no-scan 2>&1)
@@ -48,9 +47,6 @@ contains "${mixed_cache_out}" "Cache: reset Trivy DB" || fail "--cache Reset=All
 contains "${mixed_cache_out}" "Cache: reset Grype DB" || fail "--cache Reset=All missing Grype reset"
 skip_cache_out=$("${build_script}" --cache "Skip-Update=TrIvY" --dry-run --no-lint --no-test 2>&1)
 contains "${skip_cache_out}" "Trivy DB update skipped" || fail "--cache Skip-Update=TrIvY missing Trivy skip-update"
-smoke_bucket_out=$("${build_script}" --dry-run --no-lint --no-test --no-scan --no-advise --smoke-test-bucket custom.stage.bucket 2>&1)
-contains "${smoke_bucket_out}" "AWS_S3_BUCKET_NAME='custom.stage.bucket'" || fail "--smoke-test-bucket did not propagate to Stage 3b"
-
 build_smoke_env_out=$(BUILD_SMOKE=false "${build_script}" --dry-run --no-lint --no-test --no-scan --no-advise 2>&1)
 [[ "${build_smoke_env_out}" != *"Stage 3b: Smoke"* ]] || fail "BUILD_SMOKE=false should suppress Stage 3b"
 

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# Yet another version of `rotate-backups` but this time applied to an AWS S3 backup archive bucket.
+# Rename Home Assistant backups to ISO-datetime order and sync them to S3.
 # Copyright (C) 2025 James Hanlon [mailto:jim@hanlonsoftware.com]
 #
 # This program is free software: you can redistribute it and/or modify
@@ -50,20 +50,39 @@ LABEL org.opencontainers.image.title="ha-offsite-backups" \
       org.opencontainers.image.created="${BUILD_DATE}"
 
 COPY requirements.txt /tmp/
-RUN apk add --no-cache --no-interactive --upgrade \
-        aws-cli=2.27.25-r0 \
-        bash=5.2.37-r0 \
-        coreutils=9.7-r1 \
-        findutils=4.10.0-r0 \
-        py3-cryptography=44.0.3-r0 \
-        py3-pip=25.1.1-r0 \
-        py3-urllib3=1.26.20-r1 \
-        tzdata=2026a-r0 \
-    && pip3 install --no-cache-dir --break-system-packages \
-        -r /tmp/requirements.txt \
+# hadolint ignore=DL3013,DL3018
+RUN echo "[INFO] start installing ha-offsite-backups" \
+    && apk update \
+    && apk upgrade --no-cache --no-interactive \
+    && apk add --no-cache --no-interactive --upgrade \
+            aws-cli=2.27.25-r0 \
+            bash=5.2.37-r0 \
+            coreutils=9.7-r1 \
+            findutils=4.10.0-r0 \
+            py3-cryptography=44.0.3-r0 \
+            py3-pip=25.1.1-r0 \
+            py3-urllib3=1.26.20-r1 \
+            supercronic=0.2.33-r10 \
+            tzdata=2026a-r0 \
+    && echo "[INFO] upgrading pip" \
+    && pip install --no-cache-dir --upgrade pip \
+    && echo "[INFO] patching vulnerable transitive dependencies" \
+    && pip install --no-cache-dir -r /tmp/requirements.txt \
+    && rm -f /usr/lib/python${PYTHON_VERSION}/EXTERNALLY-MANAGED \
+    && /usr/bin/python3 -m ensurepip --upgrade \
+    && /usr/bin/python3 -m pip install --no-cache-dir "pip>=26.0" \
+    && /usr/bin/python3 -m pip install --no-cache-dir \
+            -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt \
-    && apk del py3-pip \
-    && mkdir -p /usr/local/include /usr/local/bin
+    && install -d -m 755 \
+            /usr/local/include \
+            /usr/local/share/ha-offsite-backups \
+            /var/log/ha-offsite-backups \
+    && touch /var/log/ha-offsite-backups/ha-offsite-backups.log \
+    && printf '%s\n' "${VERSION}" \
+            > /usr/local/share/ha-offsite-backups/version \
+    && echo "[INFO] completed installing ha-offsite-backups"
+
 
 # Create a non-privileged user and pre-create the crontabs directory so the
 # service user can write its own crontab without root access.
@@ -71,10 +90,15 @@ ARG UID=10001
 RUN adduser \
         --disabled-password --gecos "" --shell "/sbin/nologin" \
         --uid "${UID}" ha-offsite-backups \
-    && install -d -m 0755 -o ha-offsite-backups /var/spool/cron/crontabs
+    && install -d -m 0755 -o ha-offsite-backups /var/spool/cron/crontabs \
+    && chown ha-offsite-backups \
+           /var/log/ha-offsite-backups \
+           /var/log/ha-offsite-backups/ha-offsite-backups.log
 
 COPY --chmod=644 ./src/include/common-functions /usr/local/include/
 COPY --chmod=755 ./src/ha-offsite-backups ./src/healthcheck ./src/startup /usr/local/bin/
+RUN mkdir -p /usr/local/share/ha-offsite-backups
+COPY --chmod=644 version.txt /usr/local/share/ha-offsite-backups/version
 
 USER ha-offsite-backups
 

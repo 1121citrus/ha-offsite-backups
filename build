@@ -60,10 +60,6 @@
 #   are themselves overridden by the matching CLI flag:
 #     BUILD_VERSION, BUILD_PUSH, BUILD_PLATFORM, BUILD_REGISTRY
 #     BUILD_LINT, BUILD_TEST, BUILD_SMOKE, BUILD_SCAN, BUILD_ADVISE
-#   ROTATE_BACKUPS_VERSION
-#     Optional: pin the rotate-backups Python package version passed as a
-#     build-arg, e.g. ROTATE_BACKUPS_VERSION=7.1 ./build
-#
 # PREREQUISITES
 #   • docker with the buildx plugin (≥ 0.10)
 #   • For --push: docker login <registry> must already be authenticated, plus
@@ -307,7 +303,7 @@ while [[ $# -gt 0 ]]; do
             if [[ $# -gt 1 && ! "$2" =~ ^-- ]]; then
                 advisements="$2"; shift
             else
-                advisements="grype,scout"
+                advisements="all"   # Default to all advisements if --advise is given with no list.
             fi
             # Parse the comma-delimited list
             ADVISE_GRYPE=false
@@ -375,12 +371,6 @@ full_image="${REGISTRY}/${IMAGE_NAME}"
 tags=("--tag" "${full_image}:${VERSION}")
 if [[ "${PUSH}" == "true" && "${VERSION}" != dev-* ]]; then
     tags+=("--tag" "${full_image}:latest")
-fi
-
-# Optional build-arg to pin the rotate-backups Python package version.
-rotate_build_arg=()
-if [[ -n "${ROTATE_BACKUPS_VERSION:-}" ]]; then
-    rotate_build_arg=("--build-arg" "ROTATE_BACKUPS_VERSION=${ROTATE_BACKUPS_VERSION}")
 fi
 
 # Build-arg for the application version (stored in the image as a version file).
@@ -483,7 +473,6 @@ build_cmd=(
     docker buildx build
     --platform "${host_platform}"
     "${tags[@]}"
-    "${rotate_build_arg[@]}"
     "${version_build_arg[@]}"
     --load
 )
@@ -514,7 +503,11 @@ if [[ "${TEST}" == "true" ]]; then
         -v "${script_dir}:/code:ro" \
         -w /code \
         bats/bats:1.13.0 \
-            test/00-noop.bats
+            test/00-noop.bats \
+            test/01-dockerfile.bats \
+            test/02-ha-offsite-backups.bats \
+            test/03-build.bats \
+            test/04-image-metadata.bats 
 fi
 
 # ---------------------------------------------------------------------------
@@ -720,7 +713,6 @@ if [[ "${PUSH}" == "true" ]]; then
         docker buildx build
         --platform "${PLATFORMS}"
         "${tags[@]}"
-        "${rotate_build_arg[@]}"
         "${version_build_arg[@]}"
         "--sbom=${SBOM}"
         "${provenance_flag}"
