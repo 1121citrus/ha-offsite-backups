@@ -14,9 +14,9 @@ Scripts and libraries installed into the container image.
 ## `ha-offsite-backups`
 
 Scans the Home Assistant backup directory for files matching
-`Automatic_backup_<release>_YYYY-MM-DD_HH.MM_nanoseconds.tar`, transforms
+`Automatic_backup_<release>_YYYY-MM-DD_HH.MM_NN.tar`, transforms
 each filename to compact ISO datetime form
-(`YYYYMMDDTHHmmSS-home-assistant-automatic-backup-<release>.tar`), and syncs
+(`YYYYMMDDTHHMMSS-home-assistant-automatic-backup-<release>.tar`), and syncs
 the renamed files to an S3 bucket.
 
 ### Key environment variables
