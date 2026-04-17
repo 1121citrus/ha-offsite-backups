@@ -1,0 +1,62 @@
+# Grype ignore rules — known vulnerabilities with no actionable fix.
+# All entries are documented in SECURITY.md.
+# Review each entry when the Alpine package index is updated.
+
+ignore:
+  # py3-jmespath: CVE-2022-32511 — no Alpine apk fix available.
+  # jmespath is used only for AWS CLI JSON queries; not exposed to user input.
+  - vulnerability: CVE-2022-32511
+    package:
+      name: py3-jmespath
+      type: apk
+
+  # python3: CVE-2025-13836 — no Alpine apk fix available.
+  # ha-offsite-backups does not use the affected CPython code path.
+  - vulnerability: CVE-2025-13836
+    package:
+      name: python3
+      type: apk
+
+  # py3-urllib3 (apk): CVE-2025-66471 and CVE-2025-66418 — no Alpine apk fix.
+  # The runtime Python import resolves to the pip-installed urllib3 >= 2.6.3,
+  # which is patched. The apk copy at /usr/lib/python3.12/site-packages/ is
+  # superseded and not used at runtime.
+  - vulnerability: CVE-2025-66471
+    package:
+      name: py3-urllib3
+      type: apk
+
+  - vulnerability: CVE-2025-66418
+    package:
+      name: py3-urllib3
+      type: apk
+
+  # jaraco-context: GHSA-58pv-8j8x-9vj2 — 5.3.0 vendored inside setuptools
+  # at setuptools/_vendor/. The runtime copy is 6.1.2 (pip-installed, patched).
+  # setuptools vendors this internally; it is not callable by application code.
+  - vulnerability: GHSA-58pv-8j8x-9vj2
+    package:
+      name: jaraco-context
+      type: python
+
+  # wheel: GHSA-8rrh-rw8j-w5fx — 0.45.1 vendored inside setuptools
+  # at setuptools/_vendor/. The runtime copy is 0.46.3 (pip-installed, patched).
+  # setuptools vendors this internally; it is not callable by application code.
+  - vulnerability: GHSA-8rrh-rw8j-w5fx
+    package:
+      name: wheel
+      type: python
+
+  # stdlib (Go, embedded in supercronic): multiple CVEs fixed in Go >= 1.24.13
+  # or >= 1.25.x. No Alpine apk update is available for supercronic=0.2.33-r10.
+  # supercronic is used only as a cron scheduler; the vulnerable Go net/http and
+  # crypto code paths are not exercised by its scheduled task execution.
+  - vulnerability: CVE-2025-68121
+    package:
+      name: stdlib
+      type: go-module
+
+  - vulnerability: CVE-2025-61732
+    package:
+      name: stdlib
+      type: go-module

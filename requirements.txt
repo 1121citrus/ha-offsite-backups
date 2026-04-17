@@ -2,5 +2,7 @@
 # Minimum constraints: raise the floor here when CVE fixes are released.
 # Dependabot tracks this file and opens version-bump PRs automatically.
 cryptography >= 46.0.5
+jaraco-context >= 6.1.0
 urllib3 >= 2.6.3
+wheel >= 0.46.2
 zipp >= 3.23.0
