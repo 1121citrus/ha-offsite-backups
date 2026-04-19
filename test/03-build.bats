@@ -105,6 +105,7 @@ setup() {
     [[ "$output" != *"Stage 5a"* ]]
     [[ "$output" != *"Stage 5b"* ]]
     [[ "$output" != *"Stage 5c"* ]]
+    [[ "$output" != *"Stage 5d"* ]]
 }
 
 @test "build --no-advise disables all advisements" {
@@ -113,6 +114,7 @@ setup() {
     [[ "$output" != *"Stage 5a"* ]]
     [[ "$output" != *"Stage 5b"* ]]
     [[ "$output" != *"Stage 5c"* ]]
+    [[ "$output" != *"Stage 5d"* ]]
 }
 
 @test "build --advise none disables all advisements" {
@@ -121,6 +123,7 @@ setup() {
     [[ "$output" != *"Stage 5a"* ]]
     [[ "$output" != *"Stage 5b"* ]]
     [[ "$output" != *"Stage 5c"* ]]
+    [[ "$output" != *"Stage 5d"* ]]
 }
 
 @test "build --advise NONE disables all advisements" {
@@ -129,14 +132,34 @@ setup() {
     [[ "$output" != *"Stage 5a"* ]]
     [[ "$output" != *"Stage 5b"* ]]
     [[ "$output" != *"Stage 5c"* ]]
+    [[ "$output" != *"Stage 5d"* ]]
 }
 
-@test "build defaults to no advisory scans" {
+@test "build defaults coverage advisory on (Stage 5d)" {
+    # --no-scan suppresses all advisements; omit it so coverage runs at default.
+    run "${BUILD_SCRIPT}" --dry-run --no-lint --no-test 2>&1
+    [[ $status -eq 0 ]]
+    [[ "$output" == *"Stage 5d: Coverage"* ]]
+}
+
+@test "build defaults Grype/Scout/Dive advisements off" {
     run "${BUILD_SCRIPT}" --dry-run --no-lint --no-test --no-scan 2>&1
     [[ $status -eq 0 ]]
     [[ "$output" != *"Stage 5a"* ]]
     [[ "$output" != *"Stage 5b"* ]]
     [[ "$output" != *"Stage 5c"* ]]
+}
+
+@test "build --no-coverage skips Stage 5d" {
+    run "${BUILD_SCRIPT}" --no-coverage --dry-run --no-lint --no-test --no-scan 2>&1
+    [[ $status -eq 0 ]]
+    [[ "$output" != *"Stage 5d"* ]]
+}
+
+@test "build --advise coverage enables Stage 5d" {
+    run "${BUILD_SCRIPT}" --advise coverage --dry-run --no-lint --no-test --no-scan 2>&1
+    [[ $status -eq 0 ]]
+    [[ "$output" == *"Stage 5d: Coverage"* ]]
 }
 
 # ============================================================================
@@ -237,6 +260,7 @@ setup() {
     run "${BUILD_SCRIPT}" --no-scan --dry-run --no-lint --no-test 2>&1
     [[ $status -eq 0 ]]
     [[ "$output" != *"Stage 5a"* ]]
+    [[ "$output" != *"Stage 5d"* ]]
 }
 
 # ============================================================================
@@ -311,6 +335,12 @@ setup() {
     run "${BUILD_SCRIPT}" --help
     [[ $status -eq 0 ]]
     [[ "$output" == *"--advise"* ]]
+}
+
+@test "build --help documents --no-coverage" {
+    run "${BUILD_SCRIPT}" --help
+    [[ $status -eq 0 ]]
+    [[ "$output" == *"--no-coverage"* ]]
 }
 
 @test "build --help documents --cache" {

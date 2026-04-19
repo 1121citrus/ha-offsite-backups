@@ -24,7 +24,8 @@ the renamed files to an S3 bucket.
 | Variable | Purpose |
 | --- | --- |
 | `BACKUP_DIR` | Path to the HA backup directory (default: `/backups`) |
-| `AWS_CONFIG_FILE` | AWS credentials file (default: `/run/secrets/aws-config`) |
+| `AWS_CONFIG_FILE` | AWS config file path (default: `/run/secrets/aws-config`) |
+| `AWS_SHARED_CREDENTIALS_FILE` | AWS credentials file path (optional; supplements `AWS_CONFIG_FILE`) |
 | `AWS_S3_BUCKET_NAME` | Destination S3 bucket (also accepts `HA_OFFSITE_BACKUPS_AWS_S3_BUCKET_NAME`) |
 | `CRON_EXPRESSION` | Schedule for scheduler mode (default: `@daily`) |
 | `DRYRUN` | Dry-run mode — no uploads (default: `true`) |
@@ -41,10 +42,18 @@ The transformation logic is tested in `test/02-ha-offsite-backups.bats`.
 
 ### AWS credentials
 
-Credentials are read from a file path given by `AWS_CONFIG_FILE`, which is
-typically a Docker secret (`/run/secrets/aws-config`).  This avoids placing
-credentials in environment variables, which are visible to all processes in the
-container.
+Credentials are supplied via one or both of two file paths:
+
+- `AWS_CONFIG_FILE` — typically a Docker secret (`/run/secrets/aws-config`);
+  contains the `[default]` profile with region, output format, and optionally
+  inline credentials.
+- `AWS_SHARED_CREDENTIALS_FILE` — optional separate credentials file
+  (`/run/secrets/aws-credentials`); takes precedence over inline credentials in
+  the config file when present.
+
+Using files rather than environment variables avoids exposing credentials to all
+processes in the container.  The AWS CLI automatically retries transient S3
+failures with `AWS_RETRY_MODE=standard` and `AWS_MAX_ATTEMPTS=5`.
 
 ## `startup`
 

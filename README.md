@@ -52,31 +52,32 @@ This service will sync HA automatic backup files from the `home_assistant_backup
 Typical log output:
 
 ```
-20250712T125716 ha-offsite-backups [INFO] entering scheduler mode (*/1 * * * *)
-20250712T125716 ha-offsite-backups [INFO] wrote env file /root/.env
-20250712T125716 ha-offsite-backups [INFO] export AWS_CONFIG_FILE='/run/secrets/aws-config'
-20250712T125716 ha-offsite-backups [INFO] export AWS_EXTRA_ARGS=''
-20250712T125716 ha-offsite-backups [INFO] export BACKUP_DIR='/backups'
-20250712T125716 ha-offsite-backups [INFO] export BUCKET='backup-bucket'
-20250712T125716 ha-offsite-backups [INFO] export DEBUG='false'
-20250712T125716 ha-offsite-backups [INFO] export DRYRUN='false'
-20250712T125716 ha-offsite-backups [INFO] unset CRON_EXPRESSION
-20250712T125716 ha-offsite-backups [INFO] installing cron entry: */1 * * * * /usr/local/bin/ha-offsite-backups
-20250712T125717 ha-offsite-backups [INFO] crontab: */1 * * * * /usr/local/bin/ha-offsite-backups
-20250712T125717 ha-offsite-backups [INFO] handing off to supercronic
-    .
-    .
-    .
-20250716T041505 ha-offsite-backups [INFO] begin sync '/backups' to S3 bucket 'backup-bucket'
-20250716T041505 ha-offsite-backups [INFO] sync '/backups/Automatic_backup_2025.6.3_2025-07-16_05.34_36783615.tar' with 's3://backup-bucket/20250716T053436-home-assistant-automatic-backup-2025.6.3.tar'
-20250716T041505 ha-offsite-backups [INFO] sync '/backups/Automatic_backup_2025.6.3_2025-07-15_09.10_35433883.tar' with 's3://backup-bucket/20250715T091035-home-assistant-automatic-backup-2025.6.3.tar'
-20250716T041505 ha-offsite-backups [INFO] sync '/backups/Automatic_backup_2025.6.3_2025-07-15_05.30_43004208.tar' with 's3://backup-bucket/20250715T053043-home-assistant-automatic-backup-2025.6.3.tar'
-20250716T041505 ha-offsite-backups [INFO] running aws s3 sync --no-progress '/tmp/tmp.1234567890' s3://backup-bucket
-20250716T041511 ha-offsite-backups [INFO] upload: ./20250715T053043-home-assistant-automatic-backup-2025.6.3.tar to s3://backup-bucket/20250715T053043-home-assistant-automatic-backup-2025.6.3.tar
-20250716T041511 ha-offsite-backups [INFO] upload: ./20250716T053436-home-assistant-automatic-backup-2025.6.3.tar to s3://backup-bucket/20250716T053436-home-assistant-automatic-backup-2025.6.3.tar
-20250716T041514 ha-offsite-backups [INFO] upload: ./20250715T091035-home-assistant-automatic-backup-2025.6.3.tar to s3://backup-bucket/20250715T091035-home-assistant-automatic-backup-2025.6.3.tar
-20250716T041515 ha-offsite-backups [INFO] completed aws s3 sync --no-progress '/tmp/tmp.1234567890' s3://backup-bucket
-20250716T041515 ha-offsite-backups [INFO] finish sync '/backups' to S3 bucket 'backup-bucket'
+[INFO] entering scheduler mode (*/1 * * * *)
+[INFO] wrote env file /home/ha-offsite-backups/.env
+[INFO] export AWS_CONFIG_FILE=/run/secrets/aws-config
+[INFO] export AWS_EXTRA_ARGS=''
+[INFO] export BACKUP_DIR=/backups
+[INFO] export BUCKET=backup-bucket
+[INFO] export DEBUG=false
+[INFO] export DRYRUN=false
+[INFO] unset CRON_EXPRESSION
+[INFO] installing cron entry: */1 * * * * /usr/local/bin/ha-offsite-backups
+[INFO] crontab: */1 * * * * /usr/local/bin/ha-offsite-backups
+[INFO] handing off to supercronic
+time="2025-07-12T12:57:16Z" level=info msg="read crontab: /var/spool/cron/crontabs/ha-offsite-backups"
+time="2025-07-16T04:15:00Z" level=info msg=starting iteration=0 job.command=/usr/local/bin/ha-offsite-backups job.position=0 job.schedule="*/1 * * * *"
+time="2025-07-16T04:15:00Z" level=info msg="[INFO] begin sync from '/backups' to 's3://backup-bucket'" channel=stderr iteration=0 job.command=/usr/local/bin/ha-offsite-backups job.position=0 job.schedule="*/1 * * * *"
+time="2025-07-16T04:15:00Z" level=info msg="[INFO] begin sync '/backups' to 's3://backup-bucket'" channel=stderr iteration=0 job.command=/usr/local/bin/ha-offsite-backups job.position=0 job.schedule="*/1 * * * *"
+time="2025-07-16T04:15:00Z" level=info msg="[INFO] renaming 'Automatic_backup_2025.6.3_2025-07-15_09.10_35433883.tar' → '20250715T091035-home-assistant-automatic-backup-2025.6.3.tar'" channel=stderr iteration=0 job.command=/usr/local/bin/ha-offsite-backups job.position=0 job.schedule="*/1 * * * *"
+time="2025-07-16T04:15:00Z" level=info msg="[INFO] renaming 'Automatic_backup_2025.6.3_2025-07-15_05.30_43004208.tar' → '20250715T053043-home-assistant-automatic-backup-2025.6.3.tar'" channel=stderr iteration=0 job.command=/usr/local/bin/ha-offsite-backups job.position=0 job.schedule="*/1 * * * *"
+time="2025-07-16T04:15:00Z" level=info msg="[INFO] renaming 'Automatic_backup_2025.6.3_2025-07-16_05.34_36783615.tar' → '20250716T053436-home-assistant-automatic-backup-2025.6.3.tar'" channel=stderr iteration=0 job.command=/usr/local/bin/ha-offsite-backups job.position=0 job.schedule="*/1 * * * *"
+time="2025-07-16T04:15:00Z" level=info msg="[INFO] running 'aws s3 sync  /tmp/tmp.iDz9kNja24 s3://backup-bucket'" channel=stderr iteration=0 job.command=/usr/local/bin/ha-offsite-backups job.position=0 job.schedule="*/1 * * * *"
+time="2025-07-16T04:15:01Z" level=info msg="[INFO] upload: tmp/tmp.iDz9kNja24/20250716T053436-home-assistant-automatic-backup-2025.6.3.tar to s3://backup-bucket/20250716T053436-home-assistant-automatic-backup-2025.6.3.tar" channel=stderr iteration=0 job.command=/usr/local/bin/ha-offsite-backups job.position=0 job.schedule="*/1 * * * *"
+time="2025-07-16T04:15:01Z" level=info msg="[INFO] Completed 1 file(s) with 2 file(s) remaining\rupload: tmp/tmp.iDz9kNja24/20250715T091035-home-assistant-automatic-backup-2025.6.3.tar to s3://backup-bucket/20250715T091035-home-assistant-automatic-backup-2025.6.3.tar" channel=stderr iteration=0 job.command=/usr/local/bin/ha-offsite-backups job.position=0 job.schedule="*/1 * * * *"
+time="2025-07-16T04:15:01Z" level=info msg="[INFO] Completed 2 file(s) with 1 file(s) remaining\rupload: tmp/tmp.iDz9kNja24/20250715T053043-home-assistant-automatic-backup-2025.6.3.tar to s3://backup-bucket/20250715T053043-home-assistant-automatic-backup-2025.6.3.tar" channel=stderr iteration=0 job.command=/usr/local/bin/ha-offsite-backups job.position=0 job.schedule="*/1 * * * *"
+time="2025-07-16T04:15:01Z" level=info msg="[INFO] finish sync '/backups' to 's3://backup-bucket'" channel=stderr iteration=0 job.command=/usr/local/bin/ha-offsite-backups job.position=0 job.schedule="*/1 * * * *"
+time="2025-07-16T04:15:01Z" level=info msg="[INFO] completed sync from '/backups' to 's3://backup-bucket'" channel=stderr iteration=0 job.command=/usr/local/bin/ha-offsite-backups job.position=0 job.schedule="*/1 * * * *"
+time="2025-07-16T04:15:01Z" level=info msg="job succeeded" iteration=0 job.command=/usr/local/bin/ha-offsite-backups job.position=0 job.schedule="*/1 * * * *"
 ```
 
 ## Configuration
@@ -110,7 +111,20 @@ For staging runs that exercise AWS connectivity and scheduler behavior:
 ```bash
 test/staging --bucket test.staging.ha-offsite-backups \
     --aws-config ~/.secrets/aws-config \
+    --aws-credentials ~/.secrets/aws-credentials \
     1121citrus/ha-offsite-backups:dev-<sha>
+```
+
+Skip the Trivy scan and advisory scans for fast local iteration:
+
+```bash
+test/staging --no-scan 1121citrus/ha-offsite-backups:dev-<sha>
+```
+
+Run a specific advisory scan after skipping the Trivy gate:
+
+```bash
+test/staging --no-scan --advise grype 1121citrus/ha-offsite-backups:dev-<sha>
 ```
 
 Automated bats tests cover shell logic and mocked AWS paths. `test/staging`
@@ -118,10 +132,23 @@ validates the built image end-to-end in a production-equivalent staging setup.
 
 ## Building
 
-The `build` script runs all stages in order -- lint, build, test, scan:
+The `build` script runs all stages in order — lint, build, test, smoke, scan,
+and advisory scans (Grype, Scout, Dive, and coverage via kcov):
 
 ```bash
 ./build
+```
+
+Skip the slower advisory scans during development:
+
+```bash
+./build --no-scan --no-coverage
+```
+
+Run only the Grype and coverage advisories:
+
+```bash
+./build --advise grype,coverage
 ```
 
 To tag and push a release to Docker Hub (multi-platform `linux/amd64` + `linux/arm64`):

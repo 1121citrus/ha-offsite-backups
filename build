@@ -8,7 +8,7 @@
 # SYNOPSIS
 #   build [--push] [--version VERSION] [--platform PLATFORMS]
 #         [--registry REGISTRY] [--no-sbom] [--no-provenance]
-#         [--no-lint] [--no-test] [--no-smoke] [--no-scan]
+#         [--no-lint] [--no-test] [--no-smoke] [--no-coverage] [--no-scan]
 #         [--advise [ADVISEMENTS]] [--advice [ADVISEMENTS]] [--no-advise]
 #         [--cache CACHE_RULES]
 #         [--dry-run] [--help]
@@ -36,12 +36,12 @@
 #                       after --no-scan to keep the advisory scans.
 #   --advise [ADVISEMENTS]
 #                       Run advisory scans. Comma-delimited list:
-#                       'grype', 'scout', 'dive', 'all', 'none', or any
-#                       combination, e.g. 'grype,dive'. 'all' selects
-#                       every available advisement. 'none' disables all
-#                       (equivalent to --no-advise). Default with no list
-#                       given: 'grype,scout'. Advisory scans are off by
-#                       default.
+#                       'coverage', 'dive', 'grype', 'scout', 'all',
+#                       'none', or any combination, e.g. 'grype,dive'.
+#                       'all' selects every available advisement. 'none'
+#                       disables all (equivalent to --no-advise). Default
+#                       with no list given: 'all'. Advisory scans are off
+#                       by default.
 #   --advice [ADVISEMENTS]
 #                       Synonym for --advise.
 #   --no-advise         Disable all advisory scans (equivalent to
@@ -62,6 +62,9 @@
 #     BUILD_VERSION, BUILD_PUSH, BUILD_PLATFORM, BUILD_REGISTRY
 #     BUILD_LINT, BUILD_TEST, BUILD_SMOKE, BUILD_COVERAGE, BUILD_SCAN,
 #     BUILD_ADVISE
+#   BUILD_CACHE_WARN_DAYS
+#                       Warn when the Trivy or Grype DB is older than this
+#                       many days. Default: 1. Set to 0 to suppress.
 #
 # PREREQUISITES
 #   • docker with the buildx plugin (≥ 0.10)
@@ -72,14 +75,14 @@
 # STAGES (run in order; each can be skipped with --no-<stage>)
 #   1. Lint   — hadolint (Dockerfile)
 #   2. Build  — single-platform --load into local Docker daemon
-#   3a. Test  .  — bats test suite (runs in bats/bats:1.13.0 Docker container)
-#   3b. Smoke    — image-level sanity check against the built image (blocking)
-#   3c. Coverage — kcov bash line coverage report (advisory; never blocks)
+#   3a. Test  — bats test suite (runs in bats/bats:1.13.0 Docker container)
+#   3b. Smoke — image-level sanity check against the built image (blocking)
 #   4. Scan   — Trivy CRITICAL/HIGH image scan (blocking; exit 1 on findings)
 #   5. Advise — multiple advisory scans (advisory only; never blocks the build)
-#              a) Grype   — full-severity scan
-#              b) Scout   — Docker Scout CVE scan
-#              c) Dive    — image layer analysis
+#              a) Grype    — full-severity scan
+#              b) Scout    — Docker Scout CVE scan
+#              c) Dive     — image layer analysis
+#              d) Coverage — unit test coverage analysis
 #   6. Push   — multi-platform rebuild + push to registry (only with --push)
 #
 # EXAMPLES
@@ -95,8 +98,8 @@
 #   # Run only Docker Scout (skip Grype)
 #   ./build --advise scout
 #
-#   # Run all three advisements: Grype, Scout, and Dive
-#   ./build --advise grype,scout,dive
+#   # Run all four advisements: Coverage, Dive, Grype, and Scout
+#   ./build --advise coverage,dive,grype,scout
 #
 #   # Compatibility alias
 #   ./build --advice all
@@ -117,15 +120,16 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Defaults — may be overridden by environment variables or CLI flags.
 # ---------------------------------------------------------------------------
+ADVISE_COVERAGE=${BUILD_COVERAGE:-true}
+ADVISE_DIVE=false
 ADVISE_GRYPE=false
 ADVISE_SCOUT=false
-ADVISE_DIVE=false
 _ADVISE_EXPLICIT=false   # set true when --advise or --no-advise is passed
 CACHE_RESET_TRIVY=false
 CACHE_RESET_GRYPE=false
 CACHE_SKIP_UPDATE_TRIVY=false
 CACHE_SKIP_UPDATE_GRYPE=false
-COVERAGE=${BUILD_COVERAGE:-true}
+CACHE_WARN_DAYS=${BUILD_CACHE_WARN_DAYS:-1}
 DRY_RUN=false
 LINT=${BUILD_LINT:-true}
 PLATFORMS=${BUILD_PLATFORM:-linux/amd64,linux/arm64}
@@ -289,6 +293,60 @@ reset_cache_db() {
         sh -c 'rm -rf /cache/* && mkdir -p /cache'
 }
 
+# Returns the age in whole days since the Trivy DB was last downloaded, or -1
+# if the volume/metadata is absent.  All arithmetic runs inside the container
+# to avoid host-date portability concerns.
+trivy_cache_age_days() {
+    if [[ "${DRY_RUN}" == 'true' ]]; then echo -1; return 0; fi
+    docker run --rm \
+        -v "${TRIVY_CACHE_VOLUME}:/cache" \
+        alpine:3.20 sh -c '
+            meta=$(cat /cache/db/metadata.json 2>/dev/null) || exit 1
+            ts=$(printf "%s" "$meta" \
+                | sed -n "s/.*\"DownloadedAt\":\"\([^\"]*\)\".*/\1/p") || exit 1
+            [ -z "$ts" ] && exit 1
+            ts=$(printf "%s" "$ts" | sed "s/\.[^Z]*Z$//" | tr -d Z | tr T " ")
+            epoch=$(date -d "$ts" +%s 2>/dev/null) || exit 1
+            echo $(( ($(date +%s) - epoch) / 86400 ))
+        ' 2>/dev/null
+}
+
+# Returns the age in whole days since the Grype DB was built, or -1 if absent.
+grype_cache_age_days() {
+    if [[ "${DRY_RUN}" == 'true' ]]; then echo -1; return 0; fi
+    docker run --rm \
+        -v "${GRYPE_CACHE_VOLUME}:/grype-db" \
+        alpine:3.20 sh -c '
+            ts=$(grep built /grype-db/*/metadata.json 2>/dev/null \
+                | head -1 \
+                | sed "s/.*\"built\":[[:space:]]*\"\([^\"]*\)\".*/\1/") || exit 1
+            [ -z "$ts" ] && exit 1
+            ts=$(printf "%s" "$ts" | sed "s/\.[^Z]*Z$//" | tr -d Z | tr T " ")
+            epoch=$(date -d "$ts" +%s 2>/dev/null) || exit 1
+            echo $(( ($(date +%s) - epoch) / 86400 ))
+        ' 2>/dev/null
+}
+
+# Prints a staleness warning for each DB whose age exceeds CACHE_WARN_DAYS.
+# Silently skips DBs that are absent or whose age cannot be determined.
+warn_stale_cache() {
+    local warn_days="${CACHE_WARN_DAYS}"
+    if [[ "${warn_days}" -le 0 ]]; then return 0; fi
+
+    local trivy_age grype_age
+    trivy_age=$(trivy_cache_age_days 2>/dev/null) || trivy_age=-1
+    grype_age=$(grype_cache_age_days 2>/dev/null) || grype_age=-1
+
+    if [[ "${trivy_age}" -ge 0 && "${trivy_age}" -ge "${warn_days}" ]]; then
+        echo "    WARNING: Trivy DB is ${trivy_age} day(s) old" \
+             "— consider: ./build --cache reset=trivy" >&2
+    fi
+    if [[ "${grype_age}" -ge 0 && "${grype_age}" -ge "${warn_days}" ]]; then
+        echo "    WARNING: Grype DB is ${grype_age} day(s) old" \
+             "— consider: ./build --cache reset=grype" >&2
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
@@ -303,6 +361,7 @@ while [[ $# -gt 0 ]]; do
         --no-lint)          LINT=false ;;
         --no-test)          TEST=false ;;
         --no-smoke)         SMOKE=false ;;
+        --no-coverage)      ADVISE_COVERAGE=false ;;
         --no-scan)          SCAN=false ;;
         --advise|--advice)
             _ADVISE_EXPLICIT=true
@@ -313,27 +372,30 @@ while [[ $# -gt 0 ]]; do
                 advisements='all'   # Default to all advisements if --advise is given with no list.
             fi
             # Parse the comma-delimited list
+            ADVISE_COVERAGE=false
+            ADVISE_DIVE=false
             ADVISE_GRYPE=false
             ADVISE_SCOUT=false
-            ADVISE_DIVE=false
             IFS=',' read -ra adv_list <<< "$advisements"
             for adv in "${adv_list[@]}"; do
                 adv="${adv//[[:space:]]/}"
                 adv="${adv,,}"
                 case "$adv" in
-                    grype)  ADVISE_GRYPE=true ;;
-                    scout)  ADVISE_SCOUT=true ;;
-                    dive)   ADVISE_DIVE=true ;;
-                    all)    ADVISE_GRYPE=true; ADVISE_SCOUT=true; ADVISE_DIVE=true ;;
-                    none)   ADVISE_GRYPE=false; ADVISE_SCOUT=false; ADVISE_DIVE=false ;;
-                    *)      echo "Unknown advisement: $adv" >&2; exit 1 ;;
+                    coverage) ADVISE_COVERAGE=true ;;
+                    dive)     ADVISE_DIVE=true ;;
+                    grype)    ADVISE_GRYPE=true ;;
+                    scout)    ADVISE_SCOUT=true ;;
+                    all)  ADVISE_COVERAGE=true; ADVISE_DIVE=true; ADVISE_GRYPE=true; ADVISE_SCOUT=true ;;
+                    none) ADVISE_COVERAGE=false; ADVISE_DIVE=false; ADVISE_GRYPE=false; ADVISE_SCOUT=false ;;
+                    *)    echo "Unknown advisement: $adv" >&2; exit 1 ;;
                 esac
             done
             ;;
         --no-advise)
+            ADVISE_COVERAGE=false
+            ADVISE_DIVE=false
             ADVISE_GRYPE=false
             ADVISE_SCOUT=false
-            ADVISE_DIVE=false
             _ADVISE_EXPLICIT=true
             ;;
         --cache)
@@ -357,9 +419,10 @@ done
 
 # --no-scan implies --no-advise unless --advise was given explicitly.
 if [[ "${SCAN}" == 'false' && "${_ADVISE_EXPLICIT}" == 'false' ]]; then
+    ADVISE_COVERAGE=false
+    ADVISE_DIVE=false
     ADVISE_GRYPE=false
     ADVISE_SCOUT=false
-    ADVISE_DIVE=false
 fi
 
 # ---------------------------------------------------------------------------
@@ -432,6 +495,9 @@ echo "Platforms: ${PLATFORMS}" >&2
 echo "Push:      ${PUSH}" >&2
 echo "Trivy DB:  volume:${TRIVY_CACHE_VOLUME}" >&2
 echo "Grype DB:  volume:${GRYPE_CACHE_VOLUME}" >&2
+if [[ "${SCAN}" == 'true' || "${ADVISE_GRYPE}" == 'true' ]]; then
+    warn_stale_cache
+fi
 echo "" >&2
 
 # ---------------------------------------------------------------------------
@@ -536,41 +602,6 @@ if [[ "${SMOKE}" == 'true' ]]; then
             | grep -Fx '["/usr/local/bin/ha-offsite-backups"]'
         docker run --rm "${full_image}:${VERSION}" --help > /dev/null
     fi
-fi
-
-# ---------------------------------------------------------------------------
-# Stage 3c: Coverage (kcov — advisory, never blocks)
-#
-# Reruns the bats suite through kcov to produce a per-file line-coverage
-# report for src/.  Uses 1121citrus/bats-kcov (kcov + bats + jq pre-bundled).
-# Requires SYS_PTRACE; works on macOS Docker Desktop with the flags below.
-# ---------------------------------------------------------------------------
-if [[ "${TEST}" == 'true' && "${COVERAGE}" == 'true' ]]; then
-    echo '==> Stage 3c: Coverage' >&2
-
-        if [[ "${DRY_RUN}" == 'true' ]]; then
-            echo "[DRY RUN] docker run --rm --cap-add SYS_PTRACE --security-opt seccomp=unconfined " >&2
-            echo "[DRY RUN]   -v ${script_dir}:/code:ro -w /code ${BATS_KCOV_IMAGE}:${BATS_KCOV_TAG} \\"
-            echo "[DRY RUN]   bats-coverage test/00-noop.bats test/01-dockerfile.bats test/02-ha-offsite-backups.bats \\"
-            echo "[DRY RUN]   test/03-build.bats test/04-image-metadata.bats test/05-common-functions.bats" >&2
-        else
-            docker run --rm \
-                --cap-add SYS_PTRACE \
-                --security-opt seccomp=unconfined \
-                -v "${script_dir}:/code:ro" \
-                -w /code \
-                "${BATS_KCOV_IMAGE}:${BATS_KCOV_TAG}" \
-                bats-coverage \
-                    test/00-noop.bats \
-                    test/01-dockerfile.bats \
-                    test/02-ha-offsite-backups.bats \
-                    test/03-build.bats \
-                    test/04-image-metadata.bats \
-                    test/05-common-functions.bats \
-                    test/06-healthcheck.bats \
-                    test/07-ha-offsite-backups-coverage.bats \
-                >&2 || echo '    Coverage run failed (advisory only)' >&2
-        fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -746,6 +777,39 @@ if [[ "${ADVISE_DIVE}" == 'true' ]]; then
                 --ci \
                 --ci-config /.dive-ci \
                 "${full_image}:${VERSION}" || true
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# Stage 5d: Coverage (kcov — advisory, never blocks)
+#
+# Reruns the bats suite through kcov to produce a per-file line-coverage
+# report for src/.  Uses 1121citrus/bats-kcov (kcov + bats + jq pre-bundled).
+# Requires SYS_PTRACE; works on macOS Docker Desktop with the flags below.
+# ---------------------------------------------------------------------------
+if [[ "${ADVISE_COVERAGE}" == 'true' ]]; then
+    echo '==> Stage 5d: Coverage' >&2
+
+    if [[ "${DRY_RUN}" == 'true' ]]; then
+        echo "[DRY RUN] docker run --rm --cap-add SYS_PTRACE --security-opt seccomp=unconfined \\" >&2
+        echo "[DRY RUN]   -v ${script_dir}:/code:ro -w /code ${BATS_KCOV_IMAGE}:${BATS_KCOV_TAG} bats-coverage <test files>" >&2
+    else
+        docker run --rm \
+            --cap-add SYS_PTRACE \
+            --security-opt seccomp=unconfined \
+            -v "${script_dir}:/code:ro" \
+            -w /code \
+            "${BATS_KCOV_IMAGE}:${BATS_KCOV_TAG}" \
+            bats-coverage \
+                test/00-noop.bats \
+                test/01-dockerfile.bats \
+                test/02-ha-offsite-backups.bats \
+                test/03-build.bats \
+                test/04-image-metadata.bats \
+                test/05-common-functions.bats \
+                test/06-healthcheck.bats \
+                test/07-ha-offsite-backups-coverage.bats \
+            >&2 || echo '    Coverage run failed (advisory only)' >&2
     fi
 fi
 

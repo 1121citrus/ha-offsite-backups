@@ -17,18 +17,22 @@ adv_none_out=$("${build_script}" --advise none --dry-run --no-lint --no-test --n
 [[ "${adv_none_out}" != *"Stage 5a"* ]] || fail "--advise none still ran Stage 5a (Grype)"
 [[ "${adv_none_out}" != *"Stage 5b"* ]] || fail "--advise none still ran Stage 5b (Scout)"
 [[ "${adv_none_out}" != *"Stage 5c"* ]] || fail "--advise none still ran Stage 5c (Dive)"
+[[ "${adv_none_out}" != *"Stage 5d"* ]] || fail "--advise none still ran Stage 5d (Coverage)"
 adv_none_upper_out=$("${build_script}" --advise NONE --dry-run --no-lint --no-test --no-scan 2>&1)
 [[ "${adv_none_upper_out}" != *"Stage 5a"* ]] || fail "--advise NONE still ran Stage 5a (Grype)"
 [[ "${adv_none_upper_out}" != *"Stage 5b"* ]] || fail "--advise NONE still ran Stage 5b (Scout)"
 [[ "${adv_none_upper_out}" != *"Stage 5c"* ]] || fail "--advise NONE still ran Stage 5c (Dive)"
+[[ "${adv_none_upper_out}" != *"Stage 5d"* ]] || fail "--advise NONE still ran Stage 5d (Coverage)"
 adv_advice_none_out=$("${build_script}" --advice none --dry-run --no-lint --no-test --no-scan 2>&1)
 [[ "${adv_advice_none_out}" != *"Stage 5a"* ]] || fail "--advice none still ran Stage 5a (Grype)"
 [[ "${adv_advice_none_out}" != *"Stage 5b"* ]] || fail "--advice none still ran Stage 5b (Scout)"
 [[ "${adv_advice_none_out}" != *"Stage 5c"* ]] || fail "--advice none still ran Stage 5c (Dive)"
+[[ "${adv_advice_none_out}" != *"Stage 5d"* ]] || fail "--advice none still ran Stage 5d (Coverage)"
 no_advise_out=$("${build_script}" --no-advise --dry-run --no-lint --no-test --no-scan 2>&1)
 [[ "${no_advise_out}" != *"Stage 5a"* ]] || fail "--no-advise still ran Stage 5a (Grype)"
 [[ "${no_advise_out}" != *"Stage 5b"* ]] || fail "--no-advise still ran Stage 5b (Scout)"
 [[ "${no_advise_out}" != *"Stage 5c"* ]] || fail "--no-advise still ran Stage 5c (Dive)"
+[[ "${no_advise_out}" != *"Stage 5d"* ]] || fail "--no-advise still ran Stage 5d (Coverage)"
 adv_multi_out=$("${build_script}" --advise scout,dive --dry-run --no-lint --no-test --no-scan 2>&1)
 contains "${adv_multi_out}" "Stage 5b: Advise (Scout)" || fail "--advise scout,dive did not enable Scout"
 contains "${adv_multi_out}" "Stage 5c: Advise (Dive)" || fail "--advise scout,dive did not enable Dive"
@@ -39,6 +43,11 @@ default_out=$("${build_script}" --dry-run --no-lint --no-test --no-scan 2>&1)
 [[ "${default_out}" != *"Stage 5a"* ]] || fail "default still ran Stage 5a (Grype)"
 [[ "${default_out}" != *"Stage 5b"* ]] || fail "default still ran Stage 5b (Scout)"
 [[ "${default_out}" != *"Stage 5c"* ]] || fail "default still ran Stage 5c (Dive)"
+contains "${default_out}" "Stage 5d: Coverage" || fail "default did not run Stage 5d (Coverage)"
+no_coverage_out=$("${build_script}" --no-coverage --dry-run --no-lint --no-test --no-scan 2>&1)
+[[ "${no_coverage_out}" != *"Stage 5d"* ]] || fail "--no-coverage still ran Stage 5d (Coverage)"
+adv_coverage_out=$("${build_script}" --advise coverage --dry-run --no-lint --no-test --no-scan 2>&1)
+contains "${adv_coverage_out}" "Stage 5d: Coverage" || fail "--advise coverage did not enable Stage 5d"
 cache_out=$("${build_script}" --cache "reset=all" --dry-run --no-lint --no-test --no-scan --no-advise 2>&1)
 contains "${cache_out}" "Cache: reset Trivy DB" || fail "--cache reset=all missing Trivy reset"
 contains "${cache_out}" "Cache: reset Grype DB" || fail "--cache reset=all missing Grype reset"
