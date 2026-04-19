@@ -56,10 +56,10 @@ setup() {
 # Advisement Option Parsing Tests
 # ============================================================================
 
-@test "build --advise scout enables Scout" {
+@test "build --advise scout is rejected (scout is gating)" {
     run "${BUILD_SCRIPT}" --advise scout --dry-run --no-lint --no-test --no-scan 2>&1
-    [[ $status -eq 0 ]]
-    [[ "$output" == *"Stage 5b: Advise (Scout)"* ]]
+    [[ $status -eq 1 ]]
+    [[ "$output" == *"Unknown advisement"* ]]
 }
 
 @test "build --advise dive enables Dive" {
@@ -80,17 +80,16 @@ setup() {
     [[ "$output" == *"Stage 5c: Advise (Dive)"* ]]
 }
 
-@test "build --advice scout is alias for --advise scout" {
+@test "build --advice scout is rejected (scout is gating)" {
     run "${BUILD_SCRIPT}" --advice scout --dry-run --no-lint --no-test --no-scan 2>&1
-    [[ $status -eq 0 ]]
-    [[ "$output" == *"Stage 5b: Advise (Scout)"* ]]
+    [[ $status -eq 1 ]]
+    [[ "$output" == *"Unknown advisement"* ]]
 }
 
-@test "build --advise scout,dive enables Scout and Dive" {
+@test "build --advise scout,dive is rejected (scout is gating)" {
     run "${BUILD_SCRIPT}" --advise scout,dive --dry-run --no-lint --no-test --no-scan 2>&1
-    [[ $status -eq 0 ]]
-    [[ "$output" == *"Stage 5b: Advise (Scout)"* ]]
-    [[ "$output" == *"Stage 5c: Advise (Dive)"* ]]
+    [[ $status -eq 1 ]]
+    [[ "$output" == *"Unknown advisement"* ]]
 }
 
 @test "build --advise rejects unknown advisement" {
@@ -135,11 +134,10 @@ setup() {
     [[ "$output" != *"Stage 5d"* ]]
 }
 
-@test "build defaults coverage advisory on (Stage 5d)" {
-    # --no-scan suppresses all advisements; omit it so coverage runs at default.
+@test "build coverage advisory off by default" {
     run "${BUILD_SCRIPT}" --dry-run --no-lint --no-test 2>&1
     [[ $status -eq 0 ]]
-    [[ "$output" == *"Stage 5d: Coverage"* ]]
+    [[ "$output" != *"Stage 5d"* ]]
 }
 
 @test "build defaults Grype/Scout/Dive advisements off" {
@@ -150,8 +148,8 @@ setup() {
     [[ "$output" != *"Stage 5c"* ]]
 }
 
-@test "build --no-coverage skips Stage 5d" {
-    run "${BUILD_SCRIPT}" --no-coverage --dry-run --no-lint --no-test --no-scan 2>&1
+@test "build --advise none skips Stage 5d" {
+    run "${BUILD_SCRIPT}" --advise none --dry-run --no-lint --no-test --no-scan 2>&1
     [[ $status -eq 0 ]]
     [[ "$output" != *"Stage 5d"* ]]
 }
@@ -337,10 +335,10 @@ setup() {
     [[ "$output" == *"--advise"* ]]
 }
 
-@test "build --help documents --no-coverage" {
+@test "build --help documents --advise coverage" {
     run "${BUILD_SCRIPT}" --help
     [[ $status -eq 0 ]]
-    [[ "$output" == *"--no-coverage"* ]]
+    [[ "$output" == *"coverage"* ]]
 }
 
 @test "build --help documents --cache" {
