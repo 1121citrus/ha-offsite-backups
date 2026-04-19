@@ -48,6 +48,13 @@
 #                             advisement. Default with no list given: 'grype,scout'.
 #                             Advisory scans are off by default.
 #   --no-advise               Skip all advisory scans (Coverage, Grype, Scout, and Dive)
+#   --cache CACHE_RULES       One-run cache controls for scanner DBs.
+#                             Rule format: 'reset=<targets>;skip-update=<targets>'
+#                             Targets: trivy, grype, all (comma-delimited)
+#                             Examples:
+#                               --cache 'reset=all'
+#                               --cache 'skip-update=grype'
+#                               --cache 'reset=grype;skip-update=trivy'
 #   --yes                     Skip the "yes" confirmation prompt
 #   --skip-e2e                Skip test_staging_sync_e2e
 #   --test TEST               Run only the named test function
@@ -93,6 +100,9 @@
 #   # Run all three advisements: Grype, Scout, and Dive:
 #   test/staging --advise grype,scout,dive 1121citrus/ha-offsite-backups:latest
 #
+#   # Reset scanner DB caches for this run, then skip Grype DB update:
+#   test/staging --cache 'reset=all;skip-update=grype' 1121citrus/ha-offsite-backups:latest
+#
 #   # Full test suite against a dedicated test bucket:
 #   test/staging --bucket test.my-backups \
 #       --aws-config ~/.secrets/aws-config \
@@ -131,6 +141,10 @@ _ADVISE_DIVE=false
 _ADVISE_GRYPE=false
 _ADVISE_SCOUT=false
 _ADVISE_EXPLICIT=false   # set to true when --advise or --no-advise is passed
+_CACHE_RESET_TRIVY=false
+_CACHE_RESET_GRYPE=false
+_CACHE_SKIP_UPDATE_TRIVY=false
+_CACHE_SKIP_UPDATE_GRYPE=false
 DOCKER_RUN_ARGS="${HA_OFFSITE_BACKUPS_DOCKER_RUN_ARGS-${DOCKER_RUN_ARGS:-}}"
 
 # Tool image refs — keep in sync with the top-level build script.
@@ -146,6 +160,56 @@ TRIVY_TAG=0.62.1
 # Named Docker volumes for scanner DB caches (avoid host-path coupling).
 TRIVY_CACHE_VOLUME=ha-offsite-backups-staging-trivy-cache
 GRYPE_CACHE_VOLUME=ha-offsite-backups-staging-grype-cache
+
+_set_cache_targets() {
+    local mode="$1" targets_csv="$2" target
+    IFS=',' read -ra _tgts <<< "${targets_csv,,}"
+    for target in "${_tgts[@]}"; do
+        case "${target}" in
+            trivy)
+                if [[ "${mode}" == "reset" ]];       then _CACHE_RESET_TRIVY=true; fi
+                if [[ "${mode}" == "skip-update" ]]; then _CACHE_SKIP_UPDATE_TRIVY=true; fi
+                ;;
+            grype)
+                if [[ "${mode}" == "reset" ]];       then _CACHE_RESET_GRYPE=true; fi
+                if [[ "${mode}" == "skip-update" ]]; then _CACHE_SKIP_UPDATE_GRYPE=true; fi
+                ;;
+            all)
+                if [[ "${mode}" == "reset" ]]; then
+                    _CACHE_RESET_TRIVY=true; _CACHE_RESET_GRYPE=true
+                fi
+                if [[ "${mode}" == "skip-update" ]]; then
+                    _CACHE_SKIP_UPDATE_TRIVY=true; _CACHE_SKIP_UPDATE_GRYPE=true
+                fi
+                ;;
+            *) echo "Unknown cache target: ${target}" >&2; exit 1 ;;
+        esac
+    done
+}
+
+_parse_cache_rules() {
+    local rules="$1" entry key value
+    IFS=';' read -ra _rules <<< "${rules}"
+    for entry in "${_rules[@]}"; do
+        key="${entry%%=*}"; value="${entry#*=}"
+        key="${key,,}"; key="${key// /}"; value="${value// /}"
+        if [[ "${entry}" != *=* || -z "${key}" || -z "${value}" ]]; then
+            echo "Invalid --cache rule: ${entry}" >&2; exit 1
+        fi
+        case "${key}" in
+            reset|skip-update) _set_cache_targets "${key}" "${value}" ;;
+            *) echo "Unknown --cache rule key: ${key}" >&2; exit 1 ;;
+        esac
+    done
+}
+
+_reset_cache_db() {
+    local volume_name="$1"
+    docker run --rm \
+        -v "${volume_name}:/cache" \
+        alpine:3.21 \
+        sh -c "rm -rf /cache/* && mkdir -p /cache"
+}
 
 show_help() {
     # Extract the header comment from SYNOPSIS through EXAMPLES (inclusive).
@@ -599,6 +663,11 @@ test_staging_trivy_scan() {
     }
     printf '  running Trivy scan on %s...\n' "${IMAGE}" >&2
 
+    local _trivy_extra_flags=()
+    if [[ "${_CACHE_SKIP_UPDATE_TRIVY}" == "true" ]]; then
+        echo "    Trivy DB update skipped for this run (--cache skip-update=trivy)" >&2
+        _trivy_extra_flags+=(--skip-db-update --skip-java-db-update)
+    fi
     local result=0
     docker run --rm \
         -v "${_scan_tar}:/scan.tar:ro" \
@@ -610,6 +679,7 @@ test_staging_trivy_scan() {
             --ignore-unfixed \
             --severity HIGH,CRITICAL \
             --timeout 5m \
+            "${_trivy_extra_flags[@]}" \
             --input /scan.tar 2>&1 || result=$?
     if [[ ${result} -eq 0 ]]; then
         echo "PASS '${FUNCNAME[0]}': no unfixed HIGH/CRITICAL CVEs found"
@@ -631,9 +701,15 @@ test_staging_grype_advise() {
     }
 
     printf '  running Grype advisory scan on %s...\n' "${IMAGE}" >&2
+    local _grype_extra_env=()
+    if [[ "${_CACHE_SKIP_UPDATE_GRYPE}" == "true" ]]; then
+        echo "    Grype DB update skipped for this run (--cache skip-update=grype)" >&2
+        _grype_extra_env+=(-e GRYPE_DB_AUTO_UPDATE=false)
+    fi
     docker run --rm \
         -v "${_scan_tar}:/scan.tar:ro" \
         -v "${GRYPE_CACHE_VOLUME}:/root/.cache/grype" \
+        "${_grype_extra_env[@]}" \
         "${GRYPE_IMAGE}:${GRYPE_TAG}" \
             docker-archive:/scan.tar 2>&1 || true
     echo "PASS '${FUNCNAME[0]}': Grype advisory scan complete (advisory only)"
@@ -714,6 +790,15 @@ run_tests() {
     fi
 
     setup || { echo "ERROR: Setup failed"; return 1; }
+
+    if [[ "${_CACHE_RESET_TRIVY}" == "true" ]]; then
+        echo "==> Cache: reset Trivy DB" >&2
+        _reset_cache_db "${TRIVY_CACHE_VOLUME}"
+    fi
+    if [[ "${_CACHE_RESET_GRYPE}" == "true" ]]; then
+        echo "==> Cache: reset Grype DB" >&2
+        _reset_cache_db "${GRYPE_CACHE_VOLUME}"
+    fi
 
     echo "Running staging tests for ha-offsite-backups..."
     echo "================================================="
@@ -802,6 +887,11 @@ main() {
                 _ADVISE_SCOUT=false
                 _ADVISE_EXPLICIT=true
                 ;;
+            --cache)
+                [[ $# -ge 2 ]] || {
+                    echo "option '${1}' requires an argument" >&2; exit 1; }
+                _parse_cache_rules "$2"; shift
+                ;;
             --yes)          _YES=true    ;;
             --skip-e2e)     _SKIP_E2E=true ;;
             --test)         _ONLY_TEST="$2"; shift ;;
@@ -834,6 +924,8 @@ main() {
     export IMAGE S3_BUCKET_NAME BUCKET_LIST AWS_CONFIG_FILE AWS_CREDENTIALS_FILE DRYRUN
     export _YES _SKIP_E2E _ONLY_TEST _SCAN
     export _ADVISE_COVERAGE _ADVISE_DIVE _ADVISE_GRYPE _ADVISE_SCOUT
+    export _CACHE_RESET_TRIVY _CACHE_RESET_GRYPE
+    export _CACHE_SKIP_UPDATE_TRIVY _CACHE_SKIP_UPDATE_GRYPE
 
     # Derive BUCKET_LIST from S3_BUCKET_NAME when not set explicitly.
     [[ -z "${BUCKET_LIST}" && -n "${S3_BUCKET_NAME}" ]] && BUCKET_LIST="${S3_BUCKET_NAME}"

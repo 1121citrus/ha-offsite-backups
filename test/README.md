@@ -77,6 +77,14 @@ test/staging --no-scan --advise grype \
 test/staging --no-scan --advise coverage \
     1121citrus/ha-offsite-backups:dev-<sha>
 
+# Reset scanner DB caches before running advisory scans:
+test/staging --cache 'reset=all' --advise grype \
+    1121citrus/ha-offsite-backups:dev-<sha>
+
+# Skip Grype DB network update (use cached DB as-is):
+test/staging --cache 'skip-update=grype' --advise grype \
+    1121citrus/ha-offsite-backups:dev-<sha>
+
 # Run one specific staging test:
 test/staging --test test_staging_cron_fires \
     --bucket test.staging.ha-offsite-backups \
@@ -105,6 +113,7 @@ Advisory scans (`--advise`) are off by default.  They never fail the test run:
 | `--advise all` | All four of the above |
 | `--no-coverage` | Suppress the coverage advisement only |
 | `--no-advise` | Suppress all advisory scans |
+| `--cache CACHE_RULES` | One-run cache controls for scanner DBs (e.g. `reset=all`, `skip-update=grype`) |
 
 ### Safety behavior
 

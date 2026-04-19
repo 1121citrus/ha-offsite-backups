@@ -360,3 +360,28 @@ setup() {
     [[ $status -eq 0 ]]
     [[ "$output" == *"skip-update="* ]]
 }
+
+# ============================================================================
+# test/staging Help Text Tests
+# ============================================================================
+
+@test "test/staging --help lists --cache option" {
+    STAGING="${BATS_TEST_DIRNAME}/staging"
+    run "${STAGING}" --help
+    [[ $status -eq 0 ]]
+    [[ "$output" == *"--cache CACHE_RULES"* ]]
+}
+
+@test "test/staging --help lists --advise option" {
+    STAGING="${BATS_TEST_DIRNAME}/staging"
+    run "${STAGING}" --help
+    [[ $status -eq 0 ]]
+    [[ "$output" == *"--advise"* ]]
+}
+
+@test "test/staging --help lists --scan option" {
+    STAGING="${BATS_TEST_DIRNAME}/staging"
+    run "${STAGING}" --help
+    [[ $status -eq 0 ]]
+    [[ "$output" == *"--scan"* ]]
+}
