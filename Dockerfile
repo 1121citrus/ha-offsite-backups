@@ -90,6 +90,7 @@ ARG UID=10001
 RUN adduser \
         --disabled-password --gecos "" --shell "/sbin/nologin" \
         --uid "${UID}" ha-offsite-backups \
+    && rm -f /var/spool/cron/crontabs \
     && install -d -m 0755 -o ha-offsite-backups /var/spool/cron/crontabs \
     && chown ha-offsite-backups \
            /var/log/ha-offsite-backups \
