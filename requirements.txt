@@ -1,7 +1,7 @@
 # Security override packages.
 # Minimum constraints: raise the floor here when CVE fixes are released.
 # Dependabot tracks this file and opens version-bump PRs automatically.
-cryptography >= 46.0.5
+cryptography >= 47.0.0
 jaraco-context >= 6.1.0
 urllib3 >= 2.6.3
 wheel >= 0.46.2
