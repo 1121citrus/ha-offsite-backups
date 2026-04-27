@@ -87,7 +87,7 @@ Variable | Default | Notes
 `AWS_CONFIG_FILE` | `/run/secrets/aws-config` | The externally provided AWS configuration file containing credentials, etc. This is intended to be a Docker [secret](https://docs.docker.com/compose/how-tos/use-secrets/) but could also be a bind mount.
 `AWS_S3_BUCKET_NAME` |  | Required parameter. The backup files will be uploaded to this S3 bucket. You may include slashes after the bucket name if you want to upload into a specific path within the bucket, e.g. `your-bucket-name/backups/daily` (without trailing forward slash (`/`)).
 `BACKUP_DIR` | `/backups` | Where to look for the HA backup files.
-`CRON_EXPRESSION` | `@daily` | Busybox `crond` expression for when the backup should run. Use e.g. `0 4 * * *` to back up at 4 AM every night. See [crontab.guru](https://crontab.guru/) for more. Note: busybox `crond` syntax differs slightly from Vixie cron.
+`CRON_EXPRESSION` | `@daily` | Supercronic cron expression for when the backup should run. Use e.g. `0 4 * * *` to back up at 4 AM every night. See [crontab.guru](https://crontab.guru/). Supercronic uses standard Vixie cron syntax.
 `DEBUG` | `false` | Set to `true` to enable `xtrace` and `verbose` shell options.
 `DRYRUN` | `true` | Set to `false` to enable live uploads to S3.
 `TZ` | `UTC` | Which timezone should `cron` use, e.g. `America/New_York` or `Europe/Warsaw`. See [full list of available time zones](http://manpages.ubuntu.com/manpages/bionic/man3/DateTime::TimeZone::Catalog.3pm.html).
