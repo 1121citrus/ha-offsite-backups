@@ -16,18 +16,18 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+ARG BASE_IMAGE=1121citrus/aws-backup-base:latest
 ARG PYTHON_VERSION=3.12
-ARG ALPINE_VERSION=3.22
 ARG VERSION=dev
 
-FROM python:${PYTHON_VERSION}-alpine${ALPINE_VERSION}
+# hadolint ignore=DL3006
+FROM ${BASE_IMAGE}
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Re-declare build args after FROM so they are visible in the build stage.
 ARG PYTHON_VERSION
 ENV PYTHON_VERSION=${PYTHON_VERSION}
-
-ARG ALPINE_VERSION
-ENV ALPINE_VERSION=${ALPINE_VERSION}
 
 ARG VERSION
 ENV VERSION=${VERSION}
@@ -50,47 +50,33 @@ LABEL org.opencontainers.image.title="ha-offsite-backups" \
       org.opencontainers.image.created="${BUILD_DATE}"
 
 COPY requirements.txt /tmp/
-# hadolint ignore=DL3013,DL3018
+# hadolint ignore=DL3041
 RUN echo "[INFO] start installing ha-offsite-backups" \
-    && apk update \
-    && apk upgrade --no-cache --no-interactive \
-    && apk add --no-cache --no-interactive --upgrade \
-            aws-cli=2.27.25-r0 \
-            bash=5.2.37-r0 \
-            coreutils=9.7-r1 \
-            findutils=4.10.0-r0 \
-            py3-cryptography=44.0.3-r0 \
-            py3-pip=25.1.1-r0 \
-            py3-urllib3=1.26.20-r1 \
-            supercronic=0.2.33-r10 \
-            tzdata=2026a-r0 \
-    && echo "[INFO] upgrading pip" \
-    && pip install --no-cache-dir --upgrade pip \
+    && dnf install -y --quiet \
+            findutils \
+            python${PYTHON_VERSION} \
+            python${PYTHON_VERSION}-pip \
+            tzdata \
     && echo "[INFO] patching vulnerable transitive dependencies" \
-    && pip install --no-cache-dir -r /tmp/requirements.txt \
-    && rm -f /usr/lib/python${PYTHON_VERSION}/EXTERNALLY-MANAGED \
-    && /usr/bin/python3 -m ensurepip --upgrade \
-    && /usr/bin/python3 -m pip install --no-cache-dir "pip>=26.0" \
-    && /usr/bin/python3 -m pip install --no-cache-dir \
-            -r /tmp/requirements.txt \
+    && python${PYTHON_VERSION} -m pip install --no-cache-dir -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt \
     && install -d -m 755 \
-            /usr/local/include \
             /usr/local/share/ha-offsite-backups \
             /var/log/ha-offsite-backups \
     && touch /var/log/ha-offsite-backups/ha-offsite-backups.log \
     && printf '%s\n' "${VERSION}" \
             > /usr/local/share/ha-offsite-backups/version \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf \
     && echo "[INFO] completed installing ha-offsite-backups"
-
 
 # Create a non-privileged user and pre-create the crontabs directory so the
 # service user can write its own crontab without root access.
 ARG UID=10001
-RUN adduser \
-        --disabled-password --gecos "" --shell "/sbin/nologin" \
+RUN useradd \
+        --create-home --shell /sbin/nologin \
         --uid "${UID}" ha-offsite-backups \
-    && rm -f /var/spool/cron/crontabs \
+    && install -d -m 755 /var/spool/cron \
     && install -d -m 0755 -o ha-offsite-backups /var/spool/cron/crontabs \
     && chown ha-offsite-backups \
            /var/log/ha-offsite-backups \

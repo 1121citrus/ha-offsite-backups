@@ -6,8 +6,8 @@ setup() {
   repo_root=$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)
 }
 
-@test "Dockerfile contains apk upgrade" {
-  run grep -F "apk upgrade --no-cache --no-interactive" "${repo_root}/Dockerfile"
+@test "Dockerfile uses dnf install" {
+  run grep -F "dnf install -y" "${repo_root}/Dockerfile"
   [ "$status" -eq 0 ]
 }
 
