@@ -19,6 +19,7 @@
 setup_hooks() {
     # Run ha-offsite-backups with staging credentials and the given CLI args.
     # Set _backup_dir before calling to mount a local directory at /backups.
+    # shellcheck disable=SC2120
     run_ha_offsite_backups() {
         local args=()
         _append_aws_mounts args
