@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-05-03
+
+### Added
+
+- Add Gitleaks secret-scanning CI workflow (`.github/workflows/gitleaks-ci.yml`)
+- Add `--advise gitleaks` option to `build` for local Gitleaks advisory scans
+
+### Changed
+
+- Bump tool image pins: Grype `v0.87.0` → `v0.112.0`, Hadolint `v2.12.0` →
+  `v2.14.0`, Shellcheck `v0.10.0` → `v0.11.0`, Trivy `0.62.1` → `0.70.0`
+- Filter Dive inefficient-file entries smaller than 1 MB from advisory output;
+  threshold is configurable via `DIVE_MIN_WASTED_BYTES` (default `1000000`)
+
 ## [1.0.8] - 2026-05-01
 
 ### Fixed
@@ -41,7 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial release
 
-[Unreleased]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.0.8...HEAD
+[Unreleased]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.0.9...HEAD
+[1.0.9]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.0.8...v1.0.9
 [1.0.8]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.0.6...v1.0.7
 [1.0.0]: https://github.com/1121citrus/ha-offsite-backups/releases/tag/1.0.0
