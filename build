@@ -692,7 +692,7 @@ fi
 if [[ "${TEST}" == "true" ]]; then
     echo "==> Stage 3: Test" >&2
     if [[ -x "${script_dir}/test/run-all" ]]; then
-        (cd "${script_dir}" && env IMAGE="${full_image}:${VERSION}" TEST_SUMMARY_JSON="${TEST_SUMMARY_JSON}" run ./test/run-all)
+        (cd "${script_dir}" && IMAGE="${full_image}:${VERSION}" TEST_SUMMARY_JSON="${TEST_SUMMARY_JSON}" run ./test/run-all)
     else
     run docker run -i --rm \
         -v "${script_dir}:/code:ro" \
