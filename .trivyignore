@@ -20,3 +20,17 @@ CVE-2026-4786
 # decompression — fix: python3 3.9.25-1.amzn2023.0.5,
 # python3.12 3.12.13-2.amzn2023.0.1
 CVE-2026-6100
+
+# python3.12-pip: improper archive handling (CVE-2026-3219) and arbitrary code
+# execution/information disclosure (CVE-2026-6357) — fix: 23.2.1-4.amzn2023.0.9
+# not yet available in AL2023 repo (repo still at 23.2.1-4.amzn2023.0.8)
+CVE-2026-3219
+CVE-2026-6357
+
+# supercronic: Go stdlib CVEs in embedded Go runtime (v0.2.45 is latest release;
+# no newer supercronic release built with Go >= 1.25.10 / >= 1.26.3 yet)
+CVE-2026-33811
+CVE-2026-33814
+CVE-2026-39820
+CVE-2026-39836
+CVE-2026-42499
