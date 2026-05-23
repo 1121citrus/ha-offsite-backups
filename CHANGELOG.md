@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-05-23
+
+### Changed
+
+- Raise the minimum `zipp` requirement from `>=3.23.1` to `>=4.1.0` in
+  `requirements.txt` to address the Dependabot update
+- Update `SECURITY.md` remediation history to reflect the `zipp>=4.1.0`
+  floor and refresh the last-updated date
+
+## [1.1.0] - 2026-05-23
+
+### Added
+
+- Add advisory stages for metrics, security posture, and code churn in
+  `build` (stages 5f, 5g, 5h)
+
+### Changed
+
+- Raise dependency floors to `cryptography>=48.0.0` and `urllib3>=2.7.0`
+- Refresh `SECURITY.md` with current open/remediated vulnerability status
+
+### Fixed
+
+- Add newly reported HIGH CVEs to `.trivyignore` until upstream packages
+  publish fixes
+
 ## [1.0.9] - 2026-05-03
 
 ### Added
@@ -55,7 +81,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial release
 
-[Unreleased]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.0.9...HEAD
+[Unreleased]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.0...v1.1.1
+[1.1.0]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.0.9...v1.1.0
 [1.0.9]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.0.8...v1.0.9
 [1.0.8]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.0.6...v1.0.7
