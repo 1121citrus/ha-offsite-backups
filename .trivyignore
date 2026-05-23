@@ -1,36 +1,13 @@
-# CVEs with fix versions identified by Trivy but not yet available in the
-# AL2023 package repositories.  Remove entries once the fixed packages land.
-
-# glibc: DoS via iconv() — fix: 2.34-231.amzn2023.0.4 (not yet in repo)
-CVE-2026-4046
-
-# cpython: incomplete control-char validation in http.cookies
-# fix: python3 3.9.25-1.amzn2023.0.5, python3.12 3.12.13-2.amzn2023.0.1
-CVE-2026-3644
-
-# cpython: stack overflow parsing XML with deeply nested DTD content models
-# fix: python3.12 3.12.13-2.amzn2023.0.1
-CVE-2026-4224
-
-# cpython: arbitrary code execution via command injection in webbrowser.open()
-# fix: python3 3.9.25-1.amzn2023.0.5, python3.12 3.12.13-2.amzn2023.0.1
-CVE-2026-4786
-
-# cpython: arbitrary code execution/info disclosure via use-after-free in
-# decompression — fix: python3 3.9.25-1.amzn2023.0.5,
-# python3.12 3.12.13-2.amzn2023.0.1
-CVE-2026-6100
-
-# python3.12-pip: improper archive handling (CVE-2026-3219) and arbitrary code
-# execution/information disclosure (CVE-2026-6357) — fix: 23.2.1-4.amzn2023.0.9
-# not yet available in AL2023 repo (repo still at 23.2.1-4.amzn2023.0.8)
-CVE-2026-3219
-CVE-2026-6357
-
-# supercronic: Go stdlib CVEs in embedded Go runtime (v0.2.45 is latest release;
-# no newer supercronic release built with Go >= 1.25.10 / >= 1.26.3 yet)
-CVE-2026-33811
-CVE-2026-33814
-CVE-2026-39820
-CVE-2026-39836
-CVE-2026-42499
+# All HIGH/CRITICAL CVEs resolved as of aws-backup-base v1.1.3 (2026-05-23).
+#
+# The AL2023 digest refresh (sha256:f03d3254...) included package updates
+# that resolved glibc (CVE-2026-4046), python3.12 (CVE-2026-3644,
+# CVE-2026-4224, CVE-2026-4786, CVE-2026-6100), and python3.12-pip
+# (CVE-2026-3219, CVE-2026-6357).
+#
+# Supercronic is now compiled from source with golang:1.26.3-alpine, which
+# resolved all embedded Go stdlib HIGH CVEs (CVE-2026-33811, CVE-2026-33814,
+# CVE-2026-39820, CVE-2026-39836, CVE-2026-42499).
+#
+# This file is kept as a placeholder.  Add new entries here if/when Trivy
+# reports unfixed HIGH or CRITICAL findings against a future build.

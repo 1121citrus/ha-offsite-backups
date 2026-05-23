@@ -42,48 +42,9 @@ Do not open a public GitHub issue for security vulnerabilities. Include:
 
 ### Open Vulnerabilities
 
-The following HIGH-severity CVEs have no available fix and are accepted in
-`.trivyignore` pending upstream releases. Each entry is removed as soon as the
-fixed package lands.
-
-#### `python3.12-pip` — AL2023 package (not yet patched in repo)
-
-| CVE | Severity | Fixed version | Status |
-| --- | --- | --- | --- |
-| CVE-2026-3219 | HIGH | `23.2.1-4.amzn2023.0.9` | Fix identified; not yet in AL2023 repo (current: `.0.8`) |
-| CVE-2026-6357 | HIGH | `23.2.1-4.amzn2023.0.9` | Fix identified; not yet in AL2023 repo (current: `.0.8`) |
-
-#### `supercronic` — embedded Go stdlib (no new release yet)
-
-Supercronic v0.2.45 (latest) embeds a Go stdlib with multiple HIGH CVEs fixed
-in Go ≥ 1.25.10 / ≥ 1.26.3. A new supercronic release built against the
-patched runtime is required; none is available yet.
-
-| CVE | Severity | Description |
-| --- | --- | --- |
-| CVE-2026-33811 | HIGH | `LookupCNAME` memory issue via cgo DNS resolver |
-| CVE-2026-33814 | HIGH | HTTP/2 SETTINGS frame processing hang |
-| CVE-2026-39820 | HIGH | DoS via malformed input in `ParseAddress`/`ParseAddressList` |
-| CVE-2026-39836 | HIGH | Panic in `Dial`/`LookupPort` on NUL byte input |
-| CVE-2026-42499 | HIGH | DoS via pathological input in `consumePhrase` |
-
-Supercronic is used solely as a cron scheduler; it processes no external network
-input in this application, which substantially limits the practical exposure.
-
-#### `python3.12` / `python3.12-pip` — CPython (fix not yet in AL2023 repo)
-
-| CVE | Severity | Description |
-| --- | --- | --- |
-| CVE-2026-3644 | HIGH | Incomplete control-char validation in `http.cookies` |
-| CVE-2026-4224 | HIGH | Stack overflow parsing XML with deeply nested DTD |
-| CVE-2026-4786 | HIGH | Arbitrary code execution via `webbrowser.open()` command injection |
-| CVE-2026-6100 | HIGH | Use-after-free in decompression (arbitrary code execution / info disclosure) |
-
-#### `glibc` — AL2023 package (fix not yet in AL2023 repo)
-
-| CVE | Severity | Description |
-| --- | --- | --- |
-| CVE-2026-4046 | HIGH | DoS via `iconv()` — fix `2.34-231.amzn2023.0.4` not yet in repo |
+No open HIGH or CRITICAL CVEs as of aws-backup-base v1.1.3 (2026-05-23).
+The AL2023 digest refresh resolved all previously pending package CVEs and
+the supercronic source build eliminated the embedded Go stdlib CVEs.
 
 ---
 
@@ -97,6 +58,10 @@ input in this application, which substantially limits the practical exposure.
 | multiple | zipp (pip) | Raised floor to `zipp>=4.1.0` in `requirements.txt` (2026-05-23) |
 | multiple | cryptography (pip) | Raised floor to `cryptography>=48.0.0` in `requirements.txt` (v1.0.10) |
 | CVE-2026-21441, CVE-2025-66471, CVE-2025-66418, CVE-2026-44431 | urllib3 (pip) | Raised floor to `urllib3>=2.7.0` in `requirements.txt` (v1.0.10) |
+| CVE-2026-4046 | glibc | AL2023 digest refresh in aws-backup-base v1.1.3 (2026-05-23) |
+| CVE-2026-3644, CVE-2026-4224, CVE-2026-4786, CVE-2026-6100 | python3.12 | AL2023 digest refresh in aws-backup-base v1.1.3 (2026-05-23) |
+| CVE-2026-3219, CVE-2026-6357 | python3.12-pip | AL2023 digest refresh in aws-backup-base v1.1.3 (2026-05-23) |
+| CVE-2026-33811, CVE-2026-33814, CVE-2026-39820, CVE-2026-39836, CVE-2026-42499 | supercronic (Go stdlib) | Supercronic now compiled from source with `golang:1.26.3-alpine` in aws-backup-base v1.1.3 |
 
 ---
 
