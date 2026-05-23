@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.1.1] - 2026-05-23
 
+### Security
+
+- Clear `.trivyignore` — all previously accepted HIGH CVEs are now resolved
+  by aws-backup-base v1.1.3: the AL2023 digest refresh landed package fixes
+  for glibc (CVE-2026-4046), python3.12 (CVE-2026-3644, CVE-2026-4224,
+  CVE-2026-4786, CVE-2026-6100), and python3.12-pip (CVE-2026-3219,
+  CVE-2026-6357); supercronic is now compiled from source with
+  `golang:1.26.3-alpine`, resolving CVE-2026-33811, CVE-2026-33814,
+  CVE-2026-39820, CVE-2026-39836, and CVE-2026-42499
+- Update `SECURITY.md` to reflect zero open HIGH/CRITICAL CVEs and move all
+  previously accepted CVEs to the remediated table
+
 ### Changed
 
 - Raise the minimum `zipp` requirement from `>=3.23.1` to `>=4.1.0` in
@@ -81,7 +93,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial release
 
-[Unreleased]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.0.9...v1.1.0
 [1.0.9]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.0.8...v1.0.9
