@@ -94,11 +94,11 @@ input in this application, which substantially limits the practical exposure.
 | Alpine APK CVEs (multiple) | `py3-jmespath`, `python3`, `py3-urllib3`, `py3-cryptography`, `supercronic` | Resolved by migrating base image from Alpine 3.22 to AL2023 (v1.0.7) |
 | CVE-2026-24049 / GHSA-8rrh-rw8j-w5fx | wheel (pip) | Pinned `wheel>=0.47.0` in `requirements.txt` |
 | GHSA-58pv-8j8x-9vj2 | jaraco-context (pip) | Pinned `jaraco-context>=6.1.2` in `requirements.txt` |
-| multiple | zipp (pip) | Pinned `zipp>=3.23.1` in `requirements.txt` |
+| multiple | zipp (pip) | Raised floor to `zipp>=4.1.0` in `requirements.txt` (2026-05-23) |
 | multiple | cryptography (pip) | Raised floor to `cryptography>=48.0.0` in `requirements.txt` (v1.0.10) |
 | CVE-2026-21441, CVE-2025-66471, CVE-2025-66418, CVE-2026-44431 | urllib3 (pip) | Raised floor to `urllib3>=2.7.0` in `requirements.txt` (v1.0.10) |
 
 ---
 
-**Last updated:** 2026-05-14
+**Last updated:** 2026-05-23
 **License:** AGPL-3.0-or-later
