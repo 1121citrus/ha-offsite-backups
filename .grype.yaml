@@ -3,6 +3,26 @@
 # Review each entry when the Alpine package index is updated.
 
 ignore:
+  # urllib3 1.25.10 in /usr/lib/python3.9 is a distro-vendored copy used by
+  # legacy AWS CLI Python internals. Application/runtime code imports the
+  # patched pip-installed urllib3 2.7.0 from /usr/local/lib/python3.12.
+  - vulnerability: GHSA-q2q7-5pp4-w6pg
+    package:
+      name: urllib3
+      type: python
+
+  - vulnerability: GHSA-qccp-gfcp-xxvc
+    package:
+      name: urllib3
+      type: python
+
+  # setuptools 68.2.2 in /usr/lib/python3.12 is a build/tooling dependency;
+  # the service runtime does not import setuptools.
+  - vulnerability: GHSA-cx63-2mw6-8hw5
+    package:
+      name: setuptools
+      type: python
+
   # py3-jmespath: CVE-2022-32511 — no Alpine apk fix available.
   # jmespath is used only for AWS CLI JSON queries; not exposed to user input.
   - vulnerability: CVE-2022-32511

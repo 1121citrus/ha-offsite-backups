@@ -300,10 +300,11 @@ test_staging_grype_advise() {
         _extra+=(-e GRYPE_DB_AUTO_UPDATE=false); }
     docker run --rm \
         -v "${_scan_tar}:/scan.tar:ro" \
+        -v "$(pwd)/.grype.yaml:/grype.yaml:ro" \
         -v "${GRYPE_CACHE_VOLUME}:/root/.cache/grype" \
         "${_extra[@]}" \
         "${GRYPE_IMAGE}:${GRYPE_TAG}" \
-            docker-archive:/scan.tar 2>&1 || true
+            docker-archive:/scan.tar --config /grype.yaml 2>&1 || true
     echo "PASS '${FUNCNAME[0]}': Grype advisory scan complete (advisory only)"
 }
 
