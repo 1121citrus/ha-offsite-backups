@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-06-10
+
+### Security
+
+- Suppress gnutls CVE-2026-33845 and libsolv CVE-2026-48863,
+  CVE-2026-48864, CVE-2026-9149, CVE-2026-9150 in `.trivyignore` — fix
+  packages exist in Trivy DB but are not yet published to AL2023 DNF
+  repositories; gnutls and libsolv added to Dockerfile `dnf install` step
+  to auto-apply the fix once the repo publishes them
+- Bump cryptography floor from `>=48.0.0` to `>=48.0.1` in
+  `requirements.txt` (Dependabot PR #11)
+- Apply actions/checkout 6.0.2→6.0.3 in CI workflows (Dependabot PR #10)
+
 ## [1.1.1] - 2026-05-23
 
 ### Security
