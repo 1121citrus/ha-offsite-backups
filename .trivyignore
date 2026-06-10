@@ -9,5 +9,14 @@
 # resolved all embedded Go stdlib HIGH CVEs (CVE-2026-33811, CVE-2026-33814,
 # CVE-2026-39820, CVE-2026-39836, CVE-2026-42499).
 #
-# This file is kept as a placeholder.  Add new entries here if/when Trivy
-# reports unfixed HIGH or CRITICAL findings against a future build.
+# Remove entries below once the fixed packages appear in the AL2023 repos
+# and a base image rebuild pulls them in.
+
+# gnutls 3.8.3-8.amzn2023.0.3 — fix in 3.8.3-8.amzn2023.0.4; not yet in AL2023 repos.
+CVE-2026-33845
+
+# libsolv 0.7.22-1.amzn2023.0.3 — fix in 0.7.22-1.amzn2023.0.4; not yet in AL2023 repos.
+CVE-2026-48863
+CVE-2026-48864
+CVE-2026-9149
+CVE-2026-9150

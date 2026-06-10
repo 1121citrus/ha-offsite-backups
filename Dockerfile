@@ -54,6 +54,8 @@ COPY requirements.txt /tmp/
 RUN echo "[INFO] start installing ha-offsite-backups" \
     && dnf install -y --quiet \
             findutils \
+            gnutls \
+            libsolv \
             python${PYTHON_VERSION} \
             python${PYTHON_VERSION}-pip \
             tzdata \
