@@ -7,105 +7,32 @@ on:
   pull_request:
     branches: [main, master]
 
-# Cancel in-progress runs for branch/PR refs; let tag builds always complete.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
-# Minimal permissions by default; individual jobs add only what they need.
 permissions:
   contents: read
 
-env:
-  IMAGE: 1121citrus/ha-offsite-backups
-
 jobs:
-  # ── Stage 1: Lint ──────────────────────────────────────────────────────────
-  lint:
-    uses: 1121citrus/shared-github-workflows/.github/workflows/lint.yml@v1
-
-  # ── Stage 2: Build ─────────────────────────────────────────────────────────
-  # Build image for scanning and smoke tests.  The bats test suite mounts
-  # project source directly so it runs in parallel with (not after) build.
-  build:
-    needs: lint
-    uses: 1121citrus/shared-github-workflows/.github/workflows/build.yml@v1
+  ci:
+    uses: 1121citrus/shared-github-workflows/.github/workflows/pipeline.yml@v1
     with:
       image: 1121citrus/ha-offsite-backups
-
-  # ── Stage 3: Test ──────────────────────────────────────────────────────────
-  # Bats tests mount the project source into the bats container — no image
-  # required — so they run in parallel with build after lint passes.
-  test:
-    needs: lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-
-      - name: Run bats test suite
-        # Use -i (not -it) since there is no TTY in CI.
-        run: docker run -i --rm -v "$PWD:/code" -w /code bats/bats:1.13.0 test
-
-  # ── Stage 3b: Image smoke test ─────────────────────────────────────────────
-  # Run one built-image smoke test to catch packaging/runtime regressions not
-  # visible in source-mounted bats tests.
-  smoke-test:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download image artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: docker-image
-          path: /tmp
-      - name: Load image
-        run: gunzip -c /tmp/image.tar.gz | docker load
- 
-      - name: Verify bash is available
-        run: docker run --rm --entrypoint bash "$IMAGE:latest" --version
-
-      - name: Verify aws CLI is available
-        run: docker run --rm --entrypoint aws "$IMAGE:latest" --version
-
-      - name: Verify common-functions is installed
-        run: docker run --rm --entrypoint test "$IMAGE:latest" -f /usr/local/include/common-functions
-
-      - name: Verify startup is executable
-        run: docker run --rm --entrypoint test "$IMAGE:latest" -x /usr/local/bin/startup
-
-      - name: Verify ha-offsite-backups is executable
-        run: docker run --rm --entrypoint test "$IMAGE:latest" -x /usr/local/bin/ha-offsite-backups
-
-      - name: Verify healthcheck is executable
-        run: docker run --rm --entrypoint test "$IMAGE:latest" -x /usr/local/bin/healthcheck
-
-      - name: Run image smoke test
-        run: |
-          cid=$(docker run -d --rm \
-            -e AWS_S3_BUCKET_NAME=smoke-bucket \
-            -e CRON_EXPRESSION='@daily' \
-            "$IMAGE:latest")
-          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
-          sleep 3
-          docker ps \
-            --filter "id=$cid" \
-            --filter "status=running" \
-            --quiet | grep -q .
-
-  # ── Stage 4: Security scan ─────────────────────────────────────────────────
-  scan:
-    needs: build
-    uses: 1121citrus/shared-github-workflows/.github/workflows/scan.yml@v1
-    with:
-      image: 1121citrus/ha-offsite-backups
-
-  # ── Stage 5: Push to Docker Hub ────────────────────────────────────────────
-  push:
-    needs: [scan, smoke-test, test]
-    if: >
-      github.event_name == 'push' &&
-      startsWith(github.ref, 'refs/tags/v')
-    uses: 1121citrus/shared-github-workflows/.github/workflows/push.yml@v1
-    with:
-      image: 1121citrus/ha-offsite-backups
+      inject-metadata: true
+      test-mode: bats
+      test-bats-files: |
+        test/00-noop.bats
+        test/01-dockerfile.bats
+        test/02-ha-offsite-backups.bats
+        test/03-build.bats
+        test/04-image-metadata.bats
+        test/05-common-functions.bats
+        test/06-healthcheck.bats
+        test/07-ha-offsite-backups-coverage.bats
+      smoke-enabled: true
+      smoke-commands: |
+        docker run --rm "${IMAGE}:${VERSION}" bash -c 'test -x /usr/local/bin/ha-offsite-backups'
+        docker run --rm "${IMAGE}:${VERSION}" /usr/local/bin/ha-offsite-backups --help
+      trivyignore: .trivyignore
     secrets: inherit
