@@ -84,7 +84,7 @@ RUN useradd \
            /var/log/ha-offsite-backups \
            /var/log/ha-offsite-backups/ha-offsite-backups.log
 
-COPY --chmod=644 ./src/include/common-functions /usr/local/include/
+COPY --chmod=644 ./include/common-functions /usr/local/include/
 COPY --chmod=755 ./src/ha-offsite-backups ./src/healthcheck ./src/startup /usr/local/bin/
 RUN mkdir -p /usr/local/share/ha-offsite-backups
 COPY --chmod=644 version.txt /usr/local/share/ha-offsite-backups/version
