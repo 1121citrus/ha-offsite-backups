@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-07-12
+
+### Changed
+
+- Regenerate `test/run-all` under generator control and update CI caller
+  workflow wiring to the shared `pipeline.yml@v1` template.
+- Canonicalize shared shell helpers under `include/common-functions` and
+  keep `src/include/common-functions` as a compatibility shim.
+- Update container packaging to copy `include/common-functions` into
+  `/usr/local/include/common-functions`.
+
+### Security
+
+- Bump `cryptography` floor in `requirements.txt` from `>=48.0.1` to
+  `>=49.0.0`.
+- Bump `actions/checkout` in gitleaks CI workflow from `v6.0.3` to
+  `v7.0.0`.
+
 ## [1.1.2] - 2026-06-10
 
 ### Security
@@ -106,7 +124,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial release
 
-[Unreleased]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.3...HEAD
+[1.1.3]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.2...v1.1.3
+[1.1.2]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.0.9...v1.1.0
 [1.0.9]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.0.8...v1.0.9
