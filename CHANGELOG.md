@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.4] - 2026-07-12
+
+### Fixed
+
+- Grant `permissions.contents: write` in `.github/workflows/ci.yml` so
+  `shared-github-workflows/.github/workflows/pipeline.yml@v1` validates
+  successfully; this resolves GitHub Actions `startup_failure` caused by
+  insufficient caller permissions for the reusable workflow's `promote`
+  job declaration.
+
 ## [1.1.3] - 2026-07-12
 
 ### Changed
@@ -124,7 +134,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial release
 
-[Unreleased]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.3...HEAD
+[Unreleased]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.4...HEAD
+[1.1.4]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.0...v1.1.1
