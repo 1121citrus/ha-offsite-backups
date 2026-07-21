@@ -156,6 +156,12 @@ function run_scheduler() {
     [[ -n "${BUCKET}" ]] || \
         error "need to specify BUCKET to sync backups to"
 
+    # Touch a startup marker immediately so src/healthcheck's short grace
+    # period covers the gap between this container coming up and the
+    # immediate sync below actually finishing.
+    local _startup_marker="${HEALTHCHECK_STARTUP_FILE:-/tmp/.ha-offsite-backups-started}"
+    touch "${_startup_marker}" 2>/dev/null || :
+
     # Write the env file consumed by supercronic-invoked jobs.
     # Use printf '%q' for every value so that values containing quotes,
     # parentheses, braces, or other shell-special characters are safely escaped.
@@ -186,6 +192,20 @@ function run_scheduler() {
     printf '%s %s\n' "${cron_expr}" "${cmd}" > "${_crontab}"
     chmod 0644 "${_crontab}"
     info "crontab: $(cat "${_crontab}")"
+
+    # Run once immediately, exactly as cron will invoke it later, so a
+    # fresh deployment gets a real success marker within minutes instead
+    # of waiting for the first scheduled run -- which, for a schedule
+    # coarser than the healthcheck's startup grace period (daily,
+    # every-N-hours), could be hours away. A failure here is logged but
+    # does not prevent entering scheduler mode; the regular schedule gets
+    # its own future attempts regardless of how this first one goes.
+    info "running one immediate sync before scheduler hand-off"
+    if "${cmd}"; then
+        info "immediate pre-schedule sync succeeded"
+    else
+        warn "immediate pre-schedule sync failed (continuing to scheduler mode regardless)"
+    fi
 
     info "handing off to supercronic"
     # -no-reap: suppress PID 1 zombie-reaping; the cron job subprocess is

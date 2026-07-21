@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# shellcheck disable=SC2016
 
 load "test_helper"
 
@@ -356,4 +357,46 @@ teardown() {
 
     [[ "$output" == *"20250706T053500-home-assistant-automatic-backup-2025.6.3.tar"* ]]
     [[ "$output" == *"20250715T091035-home-assistant-automatic-backup-2025.6.3.tar"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# run_scheduler: static analysis
+# ---------------------------------------------------------------------------
+#
+# Not exercised behaviorally: the immediate pre-schedule run invokes
+# /usr/local/bin/ha-offsite-backups by hardcoded absolute path (matching
+# exactly what the installed crontab entry invokes), which doesn't exist
+# outside a built image -- mirroring this file's existing avoidance of
+# driving run_scheduler() all the way to its exec supercronic hand-off
+# (see "CRON_EXPRESSION env var implies scheduler mode" above).
+
+@test "run_scheduler: touches the startup marker before installing the crontab" {
+    local touch_line crontab_line
+    touch_line=$(grep -n 'touch "\${_startup_marker}"' "${repo_root}/src/ha-offsite-backups" \
+        | cut -d: -f1 | head -1)
+    crontab_line=$(grep -n 'printf .%s %s\\n. "\${cron_expr}" "\${cmd}"' "${repo_root}/src/ha-offsite-backups" \
+        | cut -d: -f1 | head -1)
+    [[ -n "${touch_line}" ]]
+    [[ -n "${crontab_line}" ]]
+    [[ "${touch_line}" -lt "${crontab_line}" ]]
+}
+
+@test "run_scheduler: runs the command once immediately after installing the crontab but before exec supercronic" {
+    local crontab_line run_once_line exec_line
+    crontab_line=$(grep -n 'printf .%s %s\\n. "\${cron_expr}" "\${cmd}"' "${repo_root}/src/ha-offsite-backups" \
+        | cut -d: -f1 | head -1)
+    run_once_line=$(grep -n 'if "\${cmd}"; then' "${repo_root}/src/ha-offsite-backups" \
+        | cut -d: -f1 | head -1)
+    exec_line=$(grep -n '^\s*exec supercronic' "${repo_root}/src/ha-offsite-backups" \
+        | cut -d: -f1 | head -1)
+    [[ -n "${crontab_line}" ]]
+    [[ -n "${run_once_line}" ]]
+    [[ -n "${exec_line}" ]]
+    [[ "${crontab_line}" -lt "${run_once_line}" ]]
+    [[ "${run_once_line}" -lt "${exec_line}" ]]
+}
+
+@test "run_scheduler: a failed immediate run does not prevent the exec supercronic hand-off" {
+    grep -q 'immediate pre-schedule sync failed (continuing to scheduler mode regardless)' \
+        "${repo_root}/src/ha-offsite-backups"
 }
