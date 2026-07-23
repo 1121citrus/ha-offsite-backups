@@ -31,12 +31,33 @@ function has_cronjob_run() {
     # Check for a success marker file written after each successful run.
     # If the cron job is crashing silently, this check will fail and the
     # container will report unhealthy, alerting the operator.
+    #
+    # HEALTHCHECK_MAX_AGE_SECONDS defaults to 48 hours, not one: this
+    # container's actual schedule (CRON_EXPRESSION) can legitimately run
+    # less often than hourly -- e.g. citrus.conf's production default of
+    # */15 minutes is fine, but any schedule coarser than the freshness
+    # window makes the container flip unhealthy between runs even though
+    # nothing is wrong. 48h comfortably covers daily and every-N-hours
+    # schedules while still catching a genuinely stuck backup.
     local marker_file="${HEALTHCHECK_SUCCESS_FILE:-/tmp/.ha-offsite-backups-success}"
+    local max_age="${HEALTHCHECK_MAX_AGE_SECONDS:-172800}"
     if [[ -f "${marker_file}" ]]; then
-        # Check if the marker is recent (within the last hour).
         local marker_age=$(($(date +%s) - $(stat -c %Y "${marker_file}" 2>/dev/null || echo 0)))
-        [[ ${marker_age} -lt 3600 ]] && return 0
+        [[ ${marker_age} -lt ${max_age} ]] && return 0
     fi
+
+    # No success marker yet -- a fresh deployment's first real run may
+    # still be a full cron period away (run_scheduler runs one
+    # immediately, but that run may still be in flight or may have
+    # failed). Give it a short, separate startup grace period rather
+    # than reporting unhealthy from the instant the container boots.
+    local startup_file="${HEALTHCHECK_STARTUP_FILE:-/tmp/.ha-offsite-backups-started}"
+    local startup_grace="${HEALTHCHECK_STARTUP_GRACE_SECONDS:-900}"
+    if [[ -f "${startup_file}" ]]; then
+        local uptime=$(($(date +%s) - $(stat -c %Y "${startup_file}" 2>/dev/null || echo 0)))
+        [[ ${uptime} -lt ${startup_grace} ]] && return 0
+    fi
+
     error "backup has not run recently"
 }
 

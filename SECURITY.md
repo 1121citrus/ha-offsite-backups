@@ -42,9 +42,20 @@ Do not open a public GitHub issue for security vulnerabilities. Include:
 
 ### Open Vulnerabilities
 
-No open HIGH or CRITICAL CVEs as of aws-backup-base v1.1.3 (2026-05-23).
-The AL2023 digest refresh resolved all previously pending package CVEs and
-the supercronic source build eliminated the embedded Go stdlib CVEs.
+As of aws-backup-base's 2026-07-21 AL2023 digest refresh (confirmed via a
+fresh-DB Trivy rescan), sixteen HIGH CVEs are pending an upstream AL2023
+package fix and temporarily suppressed in `.trivyignore`:
+
+| CVE(s) | Component | Fix version (not yet in AL2023 repos) |
+| --- | --- | --- |
+| CVE-2026-58010 through CVE-2026-58016 | `glib2` (inherited from aws-backup-base) | `2.82.2-770.amzn2023` |
+| CVE-2026-54369, CVE-2026-54370 | `libacl` (inherited from aws-backup-base) | `2.4.0-1.amzn2023.0.1` |
+| CVE-2026-0864, CVE-2026-11940, CVE-2026-11972, CVE-2026-3276, CVE-2026-9669 | `python3`/`python3-libs` (inherited), `python3.12`/`python3.12-libs` (this image) | `3.9.25-1.amzn2023.0.8` / `3.12.13-2.amzn2023.0.4` |
+| CVE-2026-1502, CVE-2026-7774 | `python3.12`/`python3.12-libs` only | `3.12.13-2.amzn2023.0.4` |
+
+Remove each entry from `.trivyignore` (and this table) once the
+corresponding fixed RPM is available in AL2023 and adopted by the image
+build.
 
 ---
 
@@ -62,8 +73,10 @@ the supercronic source build eliminated the embedded Go stdlib CVEs.
 | CVE-2026-3644, CVE-2026-4224, CVE-2026-4786, CVE-2026-6100 | python3.12 | AL2023 digest refresh in aws-backup-base v1.1.3 (2026-05-23) |
 | CVE-2026-3219, CVE-2026-6357 | python3.12-pip | AL2023 digest refresh in aws-backup-base v1.1.3 (2026-05-23) |
 | CVE-2026-33811, CVE-2026-33814, CVE-2026-39820, CVE-2026-39836, CVE-2026-42499 | supercronic (Go stdlib) | Supercronic now compiled from source with `golang:1.26.3-alpine` in aws-backup-base v1.1.3 |
+| CVE-2026-33845 | gnutls | AL2023 digest refresh in aws-backup-base v1.2.0 (2026-07-21) |
+| CVE-2026-48863, CVE-2026-48864, CVE-2026-9149, CVE-2026-9150 | libsolv | AL2023 digest refresh in aws-backup-base v1.2.0 (2026-07-21) |
 
 ---
 
-**Last updated:** 2026-05-23
+**Last updated:** 2026-07-21
 **License:** AGPL-3.0-or-later

@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.5] - 2026-07-21
+
+### Fixed
+
+- `src/healthcheck`: replaced the hardcoded one-hour success-marker
+  freshness window with a configurable `HEALTHCHECK_MAX_AGE_SECONDS`
+  (default 48 hours), and added a short startup-grace check
+  (`HEALTHCHECK_STARTUP_FILE`/`HEALTHCHECK_STARTUP_GRACE_SECONDS`,
+  default 900s) for the gap before the first real run completes.
+  Previously any schedule coarser than hourly (this image's actual
+  production default is every 15 minutes, but `rotate-backups`'
+  every-8-hours and `docs-rotate`'s daily schedule in the same fleet
+  hit the identical bug) made the container flip `unhealthy` between
+  successful runs — confirmed live on citrus-2, where three sibling
+  backup/rotate containers across two apps sat unhealthy for 9+ hours
+  despite working correctly.
+- `src/ha-offsite-backups`'s `run_scheduler()`: touches the startup
+  marker immediately on entering scheduler mode, and runs one real
+  sync immediately after installing the crontab but before handing off
+  to `supercronic`, so a freshly deployed container gets a genuine
+  success marker within minutes instead of waiting for the first
+  scheduled run — which could be hours away. A failed immediate run is
+  logged but does not block the scheduler hand-off.
+- `test/06-healthcheck.bats`: fixed tests referencing a stale
+  `CRONJOB_RUN_MARKER` env var that the script has never actually read
+  (it reads `HEALTHCHECK_SUCCESS_FILE`); the "healthy path" test was
+  silently failing on `dev` before this fix.
+
 ## [1.1.4] - 2026-07-12
 
 ### Fixed
