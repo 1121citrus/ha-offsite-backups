@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.6] - 2026-07-24
+
+### Fixed
+
+- Actually release the `CRON_EXPRESSION` environment-variable scheduler-mode
+  fallback that has been present and tested in `src/ha-offsite-backups`
+  (`_cron_expression_from_env`, `test/02-ha-offsite-backups.bats`: "CRON_EXPRESSION
+  env var implies scheduler mode") since a prior scaffold-generated commit,
+  but was never actually shipped: the `1121citrus/ha-offsite-backups:1.1.5`
+  image published to the registry was built from a commit that predates
+  this fix and no longer exists anywhere in this repository's history (its
+  baked-in `GIT_COMMIT` does not resolve even after a full fetch) -- the
+  `v1.1.5` git tag was evidently moved forward at some point after that
+  image was built and published, without a corresponding rebuild/republish.
+  `Dockerfile`'s `ENTRYPOINT` calls `ha-offsite-backups` directly (not
+  `src/startup`, which always forces `--cron` and would break the
+  documented one-shot CLI-mode usage), so a container relying solely on
+  `CRON_EXPRESSION` in its environment -- as every compose caller in the
+  1121-citrus fleet does, none of them pass `--cron` explicitly -- fell
+  back to CLI mode with no fallback in the actually-published image:
+  it ran one sync and exited immediately.  Combined with `restart:
+  unless-stopped`, this manifested as a continuous restart loop rather
+  than a resident scheduler -- confirmed live on citrus-2's
+  `home-assistant-backup` service today: each cycle's sync succeeded
+  (real data reached S3), but the container never settled into a
+  steady running state and racked up dozens of restarts within minutes.
+  No source change was needed -- `version.txt` bump and this entry are
+  the actual fix, so the next image build carries the code that was
+  already sitting untested-in-production on `dev`/`staging`.
+
 ## [1.1.5] - 2026-07-21
 
 ### Fixed
