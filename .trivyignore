@@ -1,42 +1,13 @@
 # CVEs with fix versions identified by Trivy but not yet available in the
 # AL2023 package repositories. Remove entries once the fixed packages land.
 #
-# The five entries previously here (gnutls CVE-2026-33845, libsolv
-# CVE-2026-48863/48864/9149/9150) are fixed as of aws-backup-base's
-# 2026-07-21 AL2023 digest refresh, which this image inherits -- confirmed
-# absent from a fresh-DB rescan against the refreshed base. All entries
-# below are new as of that same rescan.
+# All entries previously here (glib2, libacl, and cpython findings from
+# the 2026-07-25 rescan) are resolved as of aws-backup-base's 2026-09-03
+# AL2023 digest refresh (sha256:181f98c...ce284), which this image
+# inherits -- confirmed absent from a fresh-DB rescan against the
+# refreshed base. The one entry below is new as of that same rescan.
 
-# glib2 (inherited from aws-backup-base): multiple buffer over-read /
-# path traversal / integer underflow issues — fix: 2.82.2-770.amzn2023
-# (not yet in repo)
-CVE-2026-58010
-CVE-2026-58011
-CVE-2026-58012
-CVE-2026-58013
-CVE-2026-58014
-CVE-2026-58015
-CVE-2026-58016
-
-# libacl (inherited from aws-backup-base): symlink traversal privilege
-# escalation / TOCTOU — fix: 2.4.0-1.amzn2023.0.1 (not yet in repo)
-CVE-2026-54369
-CVE-2026-54370
-
-# cpython (python3/python3-libs inherited from aws-backup-base, plus
-# this image's own python3.12/python3.12-libs): configparser injection,
-# tarfile extractall filter bypass/DoS, unicodedata DoS, BZ2
-# decompression out-of-bounds write — fix: python3 3.9.25-1.amzn2023.0.8,
-# python3.12 3.12.13-2.amzn2023.0.4 (neither yet in repo)
-CVE-2026-0864
-CVE-2026-11940
-CVE-2026-11972
-CVE-2026-3276
-CVE-2026-9669
-
-# cpython (python3.12/python3.12-libs only — not present in the base
-# image's python3.9): HTTP header injection via CR/LF in proxy tunnel
-# headers, tarfile arbitrary file write via crafted link entries — fix:
-# python3.12 3.12.13-2.amzn2023.0.4 (not yet in repo)
-CVE-2026-1502
-CVE-2026-7774
+# openssl-fips-provider-latest / openssl-libs (inherited from
+# aws-backup-base): Denial of Service via unbounded memory growth in
+# QUIC server — fix: 1:3.5.7-2.amzn2023.0.2 (not yet in repo)
+CVE-2026-14456
