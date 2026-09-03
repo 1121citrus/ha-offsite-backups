@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.7] - 2026-09-03
+
+### Changed
+
+- Updated `cryptography` to `>=50.0.1` and `wheel` to `>=0.48.0`.
+
+### Fixed
+
+- Resynchronized `.trivyignore` with the refreshed `aws-backup-base`
+  1.2.1 image, removing resolved AL2023 findings and retaining only
+  `CVE-2026-14456`, which has no available AL2023 package fix.
+- Verified the image build and gating Trivy scan pass against
+  `aws-backup-base:1.2.1`.
+
 ## [1.1.6] - 2026-07-24
 
 ### Fixed
