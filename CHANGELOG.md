@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.8] - 2026-10-28
+
+### Fixed
+
+- Fixed a Trivy gating failure on `ca-certificates` CVE-2026-113470 and
+  CVE-2026-114406. Both were already tracked in `.grype.yaml`/
+  `SECURITY.md` under ALAS2023-2026-3306, but `.trivyignore` never
+  received the corresponding entries, so Trivy (the only scanner this
+  build actually gates on) failed where Grype passed. Re-verified via
+  `dnf list --showduplicates ca-certificates` against
+  `1121citrus/aws-backup-base:1.2.2`: neither `.0.4` nor `.0.5` is on
+  the AL2023 mirror yet. Added both CVEs to `.trivyignore` and updated
+  the `SECURITY.md` table to list both fix versions.
+
+- Bumped the base image to `aws-backup-base:1.2.2` (2026-10-28 AL2023
+  digest refresh) and added a `dnf upgrade -y --quiet` step to this
+  image's own Dockerfile (previously it only ran `dnf install` for its
+  added packages, so packages inherited unchanged from the base image
+  never picked up newer AL2023 micro-releases at this image's own build
+  time).
+- Removed `perl`/`perl-*`, `python3-pygments`,
+  `python3-setuptools(-wheel)`, `python3.12-setuptools`,
+  `python3.12-pip(-wheel)`, and `python3-pip-wheel` from the image
+  entirely: confirmed via `rpm -q --whatrequires` that none has a
+  runtime dependent, and via `grep` that nothing in `src/`/`include/`/
+  `test/` invokes python, pip, perl, or pygments (`aws s3 sync` and the
+  cron/healthcheck scripts never needed them). This dropped Grype/Scout
+  findings from 351 (0 CRITICAL, 92 HIGH, 255 MEDIUM, 4 LOW) across 70
+  packages to 35 (0 CRITICAL) across 13 packages, with no test or smoke
+  regressions.
+- Resynchronized `.trivyignore` and `.grype.yaml` with the current,
+  fully-removal-adjusted scan baseline: replaced the single stale
+  `CVE-2026-14456` entry (resolved by the base image refresh) with the
+  11 HIGH/MEDIUM AL2023 repo-mirror-propagation-gap CVEs confirmed via
+  `dnf list --showduplicates` to have no matching RPM build yet, and
+  dropped every Alpine-era / vendored-dead-code entry that no longer
+  matches anything in this AL2023 image (the packages those entries
+  targeted were either migrated away in v1.0.7 or removed above).
+  Verified a clean Trivy scan (0 findings) and a clean Grype scan ("No
+  vulnerabilities found") against the final image.
+- Documented the remaining `python3-urllib3` findings in `SECURITY.md`:
+  confirmed via `rpm -q --changelog python3-urllib3` that
+  CVE-2025-66471, CVE-2025-66418, CVE-2026-21441, CVE-2026-44431, and
+  CVE-2026-97689 are AL2023 backport-applied false positives (the
+  package's version string predates upstream's numbering, which the
+  scanners match on), while CVE-2021-33503, CVE-2023-43804, and
+  CVE-2024-37891 remain genuinely unpatched and are accepted as
+  residual risk (this library is a hard runtime dependency of
+  `awscli-2`, pinned by its RPM to `<= 2.6.3`, and is only ever used
+  against AWS's own endpoints).
+
 ## [1.1.7] - 2026-09-03
 
 ### Changed

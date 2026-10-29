@@ -52,6 +52,7 @@ LABEL org.opencontainers.image.title="ha-offsite-backups" \
 COPY requirements.txt /tmp/
 # hadolint ignore=DL3041
 RUN echo "[INFO] start installing ha-offsite-backups" \
+    && dnf upgrade -y --quiet \
     && dnf install -y --quiet \
             findutils \
             gnutls \
@@ -62,6 +63,17 @@ RUN echo "[INFO] start installing ha-offsite-backups" \
     && echo "[INFO] patching vulnerable transitive dependencies" \
     && python${PYTHON_VERSION} -m pip install --no-cache-dir -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt \
+    && echo "[INFO] removing unused packages with no runtime dependents" \
+    && dnf remove -y --quiet \
+            'perl*' \
+            python3-pygments \
+            python3-setuptools \
+            python${PYTHON_VERSION}-pip \
+            python${PYTHON_VERSION}-setuptools \
+    && rpm -e --nodeps \
+            python3-pip-wheel \
+            python3-setuptools-wheel \
+            python${PYTHON_VERSION}-pip-wheel \
     && install -d -m 755 \
             /usr/local/share/ha-offsite-backups \
             /var/log/ha-offsite-backups \
