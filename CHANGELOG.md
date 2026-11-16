@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.9] - 2026-11-15
+
 ### Security
 
 - Added `--releasever=latest` to the image's `dnf upgrade` and
@@ -286,7 +288,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial release
 
-[Unreleased]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.4...HEAD
+[Unreleased]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.9...HEAD
+[1.1.9]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.8...v1.1.9
+[1.1.8]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.7...v1.1.8
+[1.1.7]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.6...v1.1.7
+[1.1.6]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.5...v1.1.6
+[1.1.5]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.4...v1.1.5
 [1.1.4]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/1121citrus/ha-offsite-backups/compare/v1.1.1...v1.1.2
