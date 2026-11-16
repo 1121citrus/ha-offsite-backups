@@ -16,7 +16,10 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-ARG BASE_IMAGE=1121citrus/aws-backup-base:latest
+# aws-backup-base 1.2.3 (AL2023 2023.12.20261112, supercronic v0.2.49 built
+# with Go 1.27.4), pinned by multi-arch index digest so a new base image
+# cannot change what a given commit builds.
+ARG BASE_IMAGE=1121citrus/aws-backup-base@sha256:dc4c176e47b9d1b818c149466bcb61ed2e5ea643a0d947d6b8fc8519b2b14852
 ARG PYTHON_VERSION=3.12
 ARG VERSION=dev
 

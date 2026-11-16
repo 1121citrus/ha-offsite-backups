@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Pinned the base image to `aws-backup-base` 1.2.3 by multi-arch index
+  digest (`sha256:dc4c176e...b2b14852`) instead of `:latest`, so publishing
+  a new base image cannot change what a commit builds. 1.2.3 carries Go
+  1.27.4 `supercronic`, clearing the Docker Scout-only CVE-2026-97054
+  finding from the overwritten base layer. A static test enforces the pin.
 - Added `--releasever=latest` to the image's `dnf upgrade` and
   `dnf install`. AL2023 locks `dnf` to the base image's release, so the
   image could not reach the fixed `glibc`, `rpm`/`python3-rpm`, and

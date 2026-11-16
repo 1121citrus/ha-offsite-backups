@@ -63,3 +63,8 @@ setup() {
   [[ "${output}" == *"dnf remove"* ]]
   [[ "${output}" != *setuptools* ]]
 }
+
+@test "base image is pinned by sha256 digest" {
+  run grep -E '^ARG BASE_IMAGE=1121citrus/aws-backup-base@sha256:[0-9a-f]{64}$' "${repo_root}/Dockerfile"
+  [ "$status" -eq 0 ]
+}

@@ -65,7 +65,6 @@ repository:
 | CVE-2023-43804 (HIGH), CVE-2024-37891 (MEDIUM) | `urllib3` 1.25.10 | Residual risk accepted. The RPM changelog does not list a fix, and AL2023 has no newer build. The AWS CLI only connects to AWS endpoints over HTTPS, which limits exposure to the cookie and proxy-header leaks these describe |
 | CVE-2024-3651, CVE-2026-45409 | `idna` 2.10 | False positives. Each is listed as fixed in `rpm -q --changelog python3-idna` |
 | CVE-2026-19617 (MEDIUM) | `lvm2` / `device-mapper-libs` | False positive. Scout compares the `device-mapper-libs` version (`1.02.185-1.amzn2023.0.6`) against the `lvm2` source package version. The installed RPM is built from `lvm2-2.03.16-1.amzn2023.0.6.src.rpm`, which is the fixed version Scout names |
-| CVE-2026-97054 (unspecified) | Go `stdlib` `1.27.3` | Unreachable. It is the `supercronic` binary in an `aws-backup-base:latest` layer that this image overwrites with its own Go 1.27.4 build; Scout indexes every layer. Clears when `aws-backup-base` is next published |
 
 If a new finding has no fixed AL2023 build (confirm with
 `dnf --releasever=latest list --showduplicates <pkg>`), add it to
