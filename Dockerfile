@@ -61,6 +61,11 @@ LABEL org.opencontainers.image.title="ha-offsite-backups" \
       org.opencontainers.image.created="${BUILD_DATE}"
 
 COPY requirements.txt /tmp/
+# python3-setuptools is removed with `rpm -e --nodeps`, not `dnf remove`:
+# awscli-2 requires it through python3-ruamel-yaml, so `dnf remove`
+# silently uninstalls the AWS CLI as well. (python3.12-setuptools leaves
+# with python3.12-pip.) `aws --version` below fails the build if the CLI
+# goes missing again.
 # --releasever=latest: AL2023 locks dnf to the release of the image this
 # builds on, so a plain `dnf upgrade` cannot reach security fixes published
 # after aws-backup-base was last pushed. This keeps the image patched
@@ -82,10 +87,10 @@ RUN echo "[INFO] start installing ha-offsite-backups" \
     && dnf remove -y --quiet \
             'perl*' \
             python3-pygments \
-            python3-setuptools \
             python${PYTHON_VERSION}-pip \
-            python${PYTHON_VERSION}-setuptools \
+    && echo "[INFO] removing setuptools without its RPM dependents" \
     && rpm -e --nodeps \
+            python3-setuptools \
             python3-pip-wheel \
             python3-setuptools-wheel \
             python${PYTHON_VERSION}-pip-wheel \
@@ -95,6 +100,7 @@ RUN echo "[INFO] start installing ha-offsite-backups" \
     && touch /var/log/ha-offsite-backups/ha-offsite-backups.log \
     && printf '%s\n' "${VERSION}" \
             > /usr/local/share/ha-offsite-backups/version \
+    && aws --version \
     && dnf clean all \
     && rm -rf /var/cache/dnf \
     && echo "[INFO] completed installing ha-offsite-backups"

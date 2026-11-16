@@ -46,3 +46,20 @@ setup() {
   run grep -F 'COPY --from=supercronic-builder' "${repo_root}/Dockerfile"
   [ "$status" -eq 0 ]
 }
+
+@test "Dockerfile verifies the AWS CLI survives package removal" {
+  run grep -E '^[[:space:]]+&& aws --version \\$' "${repo_root}/Dockerfile"
+  [ "$status" -eq 0 ]
+}
+
+@test "Dockerfile does not dnf-remove setuptools (it would remove awscli-2)" {
+  # Collect the package list of every `dnf remove` continuation block.
+  run awk '
+    /^[[:space:]]+&& dnf remove/ { f = 1 }
+    f { if ($0 ~ /^[[:space:]]+&& / && $0 !~ /dnf remove/) f = 0 }
+    f { print }
+  ' "${repo_root}/Dockerfile"
+  [ "$status" -eq 0 ]
+  [[ "${output}" == *"dnf remove"* ]]
+  [[ "${output}" != *setuptools* ]]
+}

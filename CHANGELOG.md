@@ -27,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added static Dockerfile tests for the `--releasever=latest` flag and
   the patched supercronic build stage.
 
+### Fixed
+
+- Restored the AWS CLI, which 1.1.8 shipped without, so `aws s3 sync`
+  could not run. `dnf remove python3-setuptools` also removed
+  `awscli-2`, which requires setuptools through `python3-ruamel-yaml`.
+  setuptools is now removed with `rpm -e --nodeps`, as in
+  `pg-volume-backup`. The Dockerfile runs `aws --version` so the build
+  fails if the CLI goes missing, and static tests keep both in place.
+
 ## [1.1.8] - 2026-10-28
 
 ### Fixed
