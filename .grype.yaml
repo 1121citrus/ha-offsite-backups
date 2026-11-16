@@ -1,76 +1,22 @@
 # Grype ignore rules — AL2023 packages with no fix published to the repo
-# mirror yet. All entries are documented in SECURITY.md and mirror
-# .trivyignore (same packages, same verification method).
+# mirror yet, or confirmed version-string false positives. Every entry
+# must be documented in SECURITY.md.
 #
-# Verified 2026-10-28 via `dnf list --showduplicates <pkg>` against the live
-# AL2023 repo mirror inside 1121citrus/aws-backup-base:1.2.2 -- no build
-# matching the "Fixed in" version Grype reports exists yet for any entry
-# below.
+# 2026-11-15: after switching to `dnf upgrade --releasever=latest`, the
+# 7 ALAS entries (curl, cyrus-sasl, libcap, pcre2, python3, python3.12,
+# ca-certificates) are fixed in the installed RPMs and were removed.
 #
-# All prior entries (urllib3/setuptools/wheel/jaraco-context "vendored
-# dead code" rationale, py3-jmespath/python3/py3-urllib3 Alpine apk
-# entries, and the supercronic Go stdlib entries) are obsolete: the
-# 2026-10-28 package-removal cleanup (Dockerfile) deleted setuptools, pip,
-# pygments, and perl from the image entirely (none have a runtime
-# dependent -- confirmed via `rpm -q --whatrequires`, and nothing in
-# src/include/test references python/pip/perl/pygments), so the python
-# packages those entries targeted no longer exist in the image. The
-# Alpine apk entries predate the Alpine-to-AL2023 base image migration
-# (v1.0.7) and never matched an AL2023/rpm image. supercronic's Go
-# stdlib CVEs are resolved upstream by aws-backup-base (recompiled with a
-# current Go toolchain as of v1.2.1/v1.2.2).
+# Add new entries only after confirming with
+# `dnf --releasever=latest list --showduplicates <pkg>` that no fixed build
+# exists. Give each entry a dated justification comment.
 
 ignore:
-  # curl / curl-minimal / libcurl-minimal: HTTP/2 upload Use-After-Free —
-  # fix: 8.21.0-5.amzn2023.0.3 (not yet in repo)
-  - vulnerability: ALAS2023-2026-3267
-
-  # cyrus-sasl / cyrus-sasl-lib: heap buffer overflow in
-  # add_to_challenge() allows malicious server to crash client — fix:
-  # 2.1.27-18.amzn2023.0.4 (not yet in repo)
-  - vulnerability: ALAS2023-2026-3290
-
-  # libcap: upstream Go net/http advisories misattributed by the AL2023
-  # feed to this package's NVR — fix: 2.73-1.amzn2023.0.8 (not yet in
-  # repo)
-  - vulnerability: ALAS2023-2026-3255
-
-  # pcre2 / pcre2-syntax: out-of-bounds write/read via crafted regular
-  # expressions and invalid UTF matching — fix: 10.40-1.amzn2023.0.5
-  # (not yet in repo)
-  - vulnerability: ALAS2023-2026-3269
-
-  # python3 / python3-libs: certificate verification bypass via missing
-  # server_hostname validation in SSLContext.wrap_bio() — fix:
-  # 3.9.25-1.amzn2023.0.11 (not yet in repo)
-  - vulnerability: ALAS2023-2026-3278
-
-  # python3.12 / python3.12-libs (installed directly by this image's own
-  # Dockerfile, not inherited from aws-backup-base): multiple CVEs — fix:
-  # 3.12.15-2.amzn2023.0.1 (not yet in repo)
-  - vulnerability: ALAS2023-2026-3230
-
-  # ca-certificates: Firefox website spoofing via failure to block
-  # compromised intermediate certificates — fix:
-  # 2025.2.76-1.0.amzn2023.0.4 (not yet in repo)
-  - vulnerability: ALAS2023-2026-3306
-
-  # python3-urllib3 (1.25.10, a hard runtime dependency of awscli-2, which
-  # pins `urllib3 >= 1.25.4, <= 2.6.3` -- cannot be upgraded past the
-  # AL2023-packaged version). AL2023 backports CVE fixes into this
-  # package without bumping the upstream-looking "1.25.10" version
-  # string, which the GHSA entries below match on; confirmed fixed via
-  # `rpm -q --changelog python3-urllib3`. A few older CVEs
-  # (CVE-2021-33503, CVE-2023-43804, CVE-2024-37891) remain genuinely
-  # unpatched in this package per the same changelog and have no newer
-  # AL2023 build available; accepted as residual risk (documented in
-  # SECURITY.md).
+  # 2026-11-15: python3-urllib3 1.25.10-5.amzn2023.0.9 (latest AL2023
+  # build) is a runtime dependency of awscli-2. AL2023 backports fixes
+  # without bumping the "1.25.10" version string that Grype matches.
+  # CVE-2021-33503: AL2023 rates the package "Not Affected"
+  # (alas.aws.amazon.com). Same entry as pg-volume-backup.
   - vulnerability: GHSA-q2q7-5pp4-w6pg
-    package:
-      name: urllib3
-      type: python
-
-  - vulnerability: GHSA-qccp-gfcp-xxvc
     package:
       name: urllib3
       type: python

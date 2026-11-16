@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Added `--releasever=latest` to the image's `dnf upgrade` and
+  `dnf install`. AL2023 locks `dnf` to the base image's release, so the
+  image could not reach the fixed `glibc`, `rpm`/`python3-rpm`, and
+  `sqlite-libs` builds. This resolves all 39 gating Trivy HIGH findings
+  (CVE-2026-86805, CVE-2026-103242, CVE-2026-84837, CVE-2026-95519,
+  CVE-2026-95520, CVE-2026-95521, CVE-2026-119371, CVE-2026-119372,
+  CVE-2026-119373, CVE-2026-119375, CVE-2026-119376, CVE-2026-119378)
+  without requiring a new `aws-backup-base` image.
+- Removed all 19 `.trivyignore` entries and 8 of the 9 `.grype.yaml`
+  entries, because the fixed RPMs are now installed. The `urllib3`
+  GHSA-q2q7-5pp4-w6pg (CVE-2021-33503) entry remains: AL2023 rates it
+  "Not Affected", and `python3-urllib3` is required by `awscli-2`.
+- Added a `supercronic-builder` stage (`golang:1.27.4-alpine`,
+  `GOTOOLCHAIN=local`) so `supercronic` no longer inherits the base
+  image's Go 1.27.3 stdlib, resolving Grype finding GO-2026-6859.
+- Added static Dockerfile tests for the `--releasever=latest` flag and
+  the patched supercronic build stage.
+
 ## [1.1.8] - 2026-10-28
 
 ### Fixed

@@ -30,3 +30,19 @@ setup() {
   run grep -E '^CMD ' "${repo_root}/Dockerfile"
   [ "$status" -ne 0 ]
 }
+
+@test "Dockerfile dnf upgrade and install use --releasever=latest" {
+  run grep -E 'dnf upgrade -y .*--releasever=latest' "${repo_root}/Dockerfile"
+  [ "$status" -eq 0 ]
+  run grep -E 'dnf install -y .*--releasever=latest' "${repo_root}/Dockerfile"
+  [ "$status" -eq 0 ]
+}
+
+@test "Dockerfile rebuilds supercronic with a patched local Go toolchain" {
+  run grep -E '^FROM golang:1\.27\.[0-3]-' "${repo_root}/Dockerfile"
+  [ "$status" -ne 0 ]
+  run grep -F 'GOTOOLCHAIN=local' "${repo_root}/Dockerfile"
+  [ "$status" -eq 0 ]
+  run grep -F 'COPY --from=supercronic-builder' "${repo_root}/Dockerfile"
+  [ "$status" -eq 0 ]
+}

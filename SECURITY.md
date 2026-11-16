@@ -42,35 +42,34 @@ Do not open a public GitHub issue for security vulnerabilities. Include:
 
 ### Open Vulnerabilities
 
-As of aws-backup-base 1.2.2's 2026-10-28 AL2023 digest refresh, 12 HIGH/
-MEDIUM CVEs (0 CRITICAL) are pending an upstream AL2023 package fix and
-suppressed in `.trivyignore` and `.grype.yaml`. Each was verified via
-`dnf list --showduplicates <pkg>` against the live AL2023 repo mirror
-inside `1121citrus/aws-backup-base:1.2.2`: no RPM build matching the
-"Fixed Version" the scanners report exists yet.
+As of 2026-11-15, Trivy (all severities, including unfixed, no
+`.trivyignore`) reports zero findings, and `.trivyignore` carries no
+suppressions. Grype reports one finding, which `.grype.yaml` suppresses:
+`urllib3` GHSA-q2q7-5pp4-w6pg (CVE-2021-33503), which AL2023 rates
+"Not Affected".
 
-| ALAS / CVE | Component | Fix version (not yet in AL2023 repos) |
+`python3-urllib3` and `python3-idna` are runtime dependencies of
+`awscli-2`. The installed builds (`python3-urllib3-1.25.10-5.amzn2023.0.9`,
+`python3-idna-2.10-3.amzn2023.0.4`) are the latest that AL2023 publishes.
+AL2023 backports fixes without changing the upstream `1.25.10` / `2.10`
+version strings, so scanners that read package metadata report CVEs that
+the installed RPMs already fix.
+
+Docker Scout reports the following findings, which cannot be fixed in this
+repository:
+
+| CVE | Component | Why it remains |
 | --- | --- | --- |
-| ALAS2023-2026-3267 / CVE-2026-92392 | `curl` / `curl-minimal` / `libcurl-minimal` | `8.21.0-5.amzn2023.0.3` |
-| ALAS2023-2026-3290 / CVE-2026-107161 | `cyrus-sasl` / `cyrus-sasl-lib` | `2.1.27-18.amzn2023.0.4` |
-| ALAS2023-2026-3255 / CVE-2026-78659, CVE-2026-78667, CVE-2026-94440 | `libcap` (upstream Go net/http advisories misattributed by the AL2023 feed to this package's NVR) | `2.73-1.amzn2023.0.8` |
-| ALAS2023-2026-3269 / CVE-2026-103111, CVE-2026-86145, CVE-2026-89156, CVE-2026-89160 | `pcre2` / `pcre2-syntax` | `10.40-1.amzn2023.0.5` |
-| ALAS2023-2026-3278 / CVE-2026-19553 | `python3` / `python3-libs` | `3.9.25-1.amzn2023.0.11` |
-| ALAS2023-2026-3230 / CVE-2026-15310, CVE-2026-15806, CVE-2026-17084, CVE-2026-19445, CVE-2026-19553, CVE-2026-19672, CVE-2026-82049, CVE-2026-87910 | `python3.12` / `python3.12-libs` (installed directly by this image, not inherited from aws-backup-base) | `3.12.15-2.amzn2023.0.1` |
-| ALAS2023-2026-3306 / CVE-2026-113470, CVE-2026-114406 | `ca-certificates` | `2025.2.76-1.0.amzn2023.0.4` / `.0.5` |
+| CVE-2023-45803, CVE-2025-50181, CVE-2025-66418, CVE-2025-66471, CVE-2026-21441, CVE-2026-44431, CVE-2026-97689 | `urllib3` 1.25.10 | False positives. Each is listed as fixed in `rpm -q --changelog python3-urllib3` |
+| CVE-2021-33503 (HIGH) | `urllib3` 1.25.10 | AL2023 rates the package "Not Affected". Suppressed in `.grype.yaml` |
+| CVE-2023-43804 (HIGH), CVE-2024-37891 (MEDIUM) | `urllib3` 1.25.10 | Residual risk accepted. The RPM changelog does not list a fix, and AL2023 has no newer build. The AWS CLI only connects to AWS endpoints over HTTPS, which limits exposure to the cookie and proxy-header leaks these describe |
+| CVE-2024-3651, CVE-2026-45409 | `idna` 2.10 | False positives. Each is listed as fixed in `rpm -q --changelog python3-idna` |
+| CVE-2026-19617 (MEDIUM) | `lvm2` / `device-mapper-libs` | False positive. Scout compares the `device-mapper-libs` version (`1.02.185-1.amzn2023.0.6`) against the `lvm2` source package version. The installed RPM is built from `lvm2-2.03.16-1.amzn2023.0.6.src.rpm`, which is the fixed version Scout names |
+| CVE-2026-97054 (unspecified) | Go `stdlib` `1.27.3` | Unreachable. It is the `supercronic` binary in an `aws-backup-base:latest` layer that this image overwrites with its own Go 1.27.4 build; Scout indexes every layer. Clears when `aws-backup-base` is next published |
 
-Also open: `python3-urllib3` (1.25.10, a hard runtime dependency of
-`awscli-2`, which pins `urllib3 >= 1.25.4, <= 2.6.3` — cannot be
-upgraded past the AL2023-packaged version) has three CVEs with no fix
-available in any AL2023 build, confirmed via
-`rpm -q --changelog python3-urllib3`: CVE-2021-33503, CVE-2023-43804,
-CVE-2024-37891. Accepted as residual risk — these affect an internal
-HTTP client library used only by `awscli-2`'s own `aws s3 sync` calls
-against AWS's own endpoints, not externally-supplied input.
-
-Remove an entry from `.trivyignore`/`.grype.yaml` (and this table) once
-the corresponding fixed RPM is available in AL2023 and adopted by the
-image build.
+If a new finding has no fixed AL2023 build (confirm with
+`dnf --releasever=latest list --showduplicates <pkg>`), add it to
+`.trivyignore`/`.grype.yaml` with a dated justification and list it here.
 
 ---
 
@@ -94,8 +93,13 @@ image build.
 | CVE-2026-14456 | openssl-fips-provider-latest / openssl-libs | Resolved by aws-backup-base 1.2.2's 2026-10-28 AL2023 digest refresh |
 | 351 Grype/Scout findings (0 CRITICAL, 92 HIGH, 255 MEDIUM, 4 LOW) across `perl`/`perl-*`, `python3-pygments`, `python3-setuptools(-wheel)`, `python3.12-setuptools`, `python3.12-pip(-wheel)`, `python3-pip-wheel` | perl, pygments, setuptools, pip | Removed entirely from the image (v1.1.8): none has a runtime dependent (`rpm -q --whatrequires`) and nothing in `src/`/`include/`/`test/` invokes python, pip, perl, or pygments — `aws s3 sync` and the cron/healthcheck scripts never needed them. Reduced open findings from 351 to 35, all in the 11-package AL2023 repo-mirror-gap list above |
 | CVE-2025-66471, CVE-2025-66418, CVE-2026-21441, CVE-2026-44431, CVE-2026-97689 | python3-urllib3 | Confirmed false positives via `rpm -q --changelog python3-urllib3`: AL2023 backports these fixes without bumping the "1.25.10" version string that Grype/Scout match against |
+| CVE-2026-86805 | glibc / glibc-common / glibc-minimal-langpack | `dnf upgrade --releasever=latest` (2026-11-15) |
+| CVE-2026-103242, CVE-2026-84837, CVE-2026-95519, CVE-2026-95520, CVE-2026-95521 | rpm family / python3-rpm | `dnf upgrade --releasever=latest` (2026-11-15) |
+| CVE-2026-119371, CVE-2026-119372, CVE-2026-119373, CVE-2026-119375, CVE-2026-119376, CVE-2026-119378 | sqlite-libs | `dnf upgrade --releasever=latest` (2026-11-15) |
+| ALAS2023-2026-3267, -3290, -3255, -3269, -3278, -3230, -3306 (CVE-2026-92392, CVE-2026-107161, CVE-2026-78659, CVE-2026-78667, CVE-2026-94440, CVE-2026-103111, CVE-2026-86145, CVE-2026-89156, CVE-2026-89160, CVE-2026-19553, CVE-2026-15310, CVE-2026-15806, CVE-2026-17084, CVE-2026-19445, CVE-2026-19672, CVE-2026-82049, CVE-2026-87910, CVE-2026-113470, CVE-2026-114406) | curl, cyrus-sasl, libcap, pcre2, python3, python3.12, ca-certificates | Fixed RPMs reached via `dnf upgrade --releasever=latest`; suppressions removed (2026-11-15) |
+| GO-2026-6859 | supercronic (Go stdlib) | Rebuilt in this image with `golang:1.27.4-alpine` (2026-11-15) |
 
 ---
 
-**Last updated:** 2026-10-29
+**Last updated:** 2026-11-15
 **License:** AGPL-3.0-or-later

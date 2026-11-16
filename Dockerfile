@@ -20,6 +20,17 @@ ARG BASE_IMAGE=1121citrus/aws-backup-base:latest
 ARG PYTHON_VERSION=3.12
 ARG VERSION=dev
 
+# ── Supercronic build stage ────────────────────────────────────────────────
+# Rebuild supercronic from source so the final image does not depend on the
+# Go stdlib that happened to be current when aws-backup-base was pushed.
+# GOTOOLCHAIN=local keeps the build on whatever Go ships in the pinned
+# builder image; a hardcoded version would silently override the tag.
+FROM golang:1.27.4-alpine AS supercronic-builder
+
+ARG SUPERCRONIC_VERSION=v0.2.49
+
+RUN GOTOOLCHAIN=local CGO_ENABLED=0 go install github.com/aptible/supercronic@${SUPERCRONIC_VERSION}
+
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
@@ -50,10 +61,14 @@ LABEL org.opencontainers.image.title="ha-offsite-backups" \
       org.opencontainers.image.created="${BUILD_DATE}"
 
 COPY requirements.txt /tmp/
+# --releasever=latest: AL2023 locks dnf to the release of the image this
+# builds on, so a plain `dnf upgrade` cannot reach security fixes published
+# after aws-backup-base was last pushed. This keeps the image patched
+# without waiting for (or pushing) a new base image.
 # hadolint ignore=DL3041
 RUN echo "[INFO] start installing ha-offsite-backups" \
-    && dnf upgrade -y --quiet \
-    && dnf install -y --quiet \
+    && dnf upgrade -y --quiet --releasever=latest \
+    && dnf install -y --quiet --releasever=latest \
             findutils \
             gnutls \
             libsolv \
@@ -96,6 +111,7 @@ RUN useradd \
            /var/log/ha-offsite-backups \
            /var/log/ha-offsite-backups/ha-offsite-backups.log
 
+COPY --from=supercronic-builder --chmod=755 /go/bin/supercronic /usr/local/bin/supercronic
 COPY --chmod=644 ./include/common-functions /usr/local/include/
 COPY --chmod=755 ./src/ha-offsite-backups ./src/healthcheck ./src/startup /usr/local/bin/
 RUN mkdir -p /usr/local/share/ha-offsite-backups
